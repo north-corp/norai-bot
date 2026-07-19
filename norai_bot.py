@@ -17,6 +17,7 @@ CEO_DISCORD_ID      = 779606576616964108
 CHANNEL_BULLETINS   = 1528195910637719692
 CHANNEL_FLIGHT_LOGS = 1528173868215177286
 CHANNEL_ARRIVALS    = 1528169291873255434
+GUILD_ID            = 1527555743413440533
 
 FLEET_JSON_URL = "https://north-corp.github.io/northcorp/fleet.json"
 
@@ -143,8 +144,10 @@ class NORAIBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        await self.tree.sync()
-        logger.info("Slash commands synced.")
+        guild = discord.Object(id=GUILD_ID)
+        self.tree.copy_global_to(guild=guild)
+        await self.tree.sync(guild=guild)
+        logger.info("Slash commands synced to guild.")
 
 bot = NORAIBot()
 
