@@ -9,6 +9,19 @@ from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
 import requests
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"NORAI operational.")
+
+def start_health_server():
+    port = int(os.getenv("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    server.serve_forever()
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -448,6 +461,7 @@ async def on_app_command_error(
             ephemeral=True
         )
 
+threading.Thread(target=start_health_server, daemon=True).start()
 
 if __name__ == "__main__":
     if TOKEN is None:
