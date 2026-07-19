@@ -51,6 +51,10 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"NORAI operational.")
 
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+
 
 def start_health_server():
     port = int(os.getenv("PORT", 10000))
