@@ -1005,7 +1005,7 @@ Net Profit:   {fmt_cr(net)}
 Profit/Ton:   {fmt_cr(ppt)}
 ```
 
-*For detailed trade planning with Inara price lookup, use the [NORAI Trade Calculator](https://norai.onrender.com/calculator).*"""
+*For detailed trade planning with Inara price lookup, use the [NORAI Trade Calculator](https://northcorp-norai.onrender.com/calculator).*"""
 
     await interaction.response.send_message(result)
 
