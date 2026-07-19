@@ -1,3 +1,4 @@
-discord.py
-python-dotenv
-requests
+discord.py>=2.0.0
+python-dotenv>=1.0.0
+requests>=2.28.0
+flask>=3.0.0
