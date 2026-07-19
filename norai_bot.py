@@ -965,7 +965,7 @@ async def cmd_quote(interaction: discord.Interaction):
     buy_price="Buy price per ton (CR)",
     sell_price="Sell price per ton (CR)",
     tonnage="Tonnage to haul",
-    commission="Commission rate as percentage of profit (e.g., 15)"
+    commission="Commission per ton in CR (e.g., 5000)"
 )
 async def cmd_trade(
     interaction: discord.Interaction,
@@ -985,7 +985,7 @@ async def cmd_trade(
     buy_cost = buy_price * tonnage
     sell_rev = sell_price * tonnage
     gross = sell_rev - buy_cost
-    comm_amt = gross * (commission / 100) if commission > 0 else 0
+    comm_amt = commission * tonnage
     net = gross - comm_amt
     ppt = net / tonnage
 
@@ -999,7 +999,7 @@ Tonnage:      {tonnage:,.0f} t
 Buy Cost:     {fmt_cr(buy_cost)}
 Sell Revenue: {fmt_cr(sell_rev)}
 Gross Margin: {fmt_cr(gross)}
-Comm ({commission}%):  {fmt_cr(comm_amt)}
+Comm ({commission:,.0f} CR/t):  {fmt_cr(comm_amt)}
 ─────────────────────────
 Net Profit:   {fmt_cr(net)}
 Profit/Ton:   {fmt_cr(ppt)}
