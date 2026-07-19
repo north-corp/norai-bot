@@ -109,12 +109,10 @@ def get_user_role_label(username, data=None):
 def ensure_defaults():
     data = load_accounts()
 
-    # Ensure default roles exist
     for name, info in DEFAULT_ROLES.items():
         if name not in data["roles"]:
             data["roles"][name] = info
 
-    # Ensure CEO account exists
     if "k.north" not in data["users"]:
         data["users"]["k.north"] = {
             "password_hash": hash_password("tethlon"),
@@ -123,25 +121,34 @@ def ensure_defaults():
         }
         logger.info("Created default CEO account (username: k.north). CHANGE THE PASSWORD.")
     else:
-        # Ensure CEO role is locked — in case someone tampered with accounts.json
         data["users"]["k.north"]["role"] = "ceo"
 
     save_accounts(data)
 
-    # Restore from backup if env var is set and local file only has defaults
+    # --- Backup restore with debug logging ---
+    logger.info(f"ACCOUNTS_BACKUP env var present: {bool(ACCOUNTS_BACKUP)}")
+    logger.info(f"ACCOUNTS_BACKUP length: {len(ACCOUNTS_BACKUP) if ACCOUNTS_BACKUP else 0}")
+    logger.info(f"Local users count: {len(data['users'])}")
+
     if ACCOUNTS_BACKUP:
         try:
             backup = json.loads(ACCOUNTS_BACKUP)
             backup_users = len(backup.get("users", {}))
-            local_users = len(data["users"])
-            if backup_users > local_users:
-                logger.info(f"Restoring accounts from backup ({backup_users} users vs {local_users} local).")
+            logger.info(f"Backup users count: {backup_users}")
+            logger.info(f"Backup users: {list(backup.get('users', {}).keys())}")
+
+            if backup_users > len(data["users"]):
+                logger.info(f"Restoring accounts from backup ({backup_users} users vs {len(data['users'])} local).")
                 data = backup
-                # Still enforce roles
                 if "roles" not in data:
                     data["roles"] = dict(DEFAULT_ROLES)
                 data["users"]["k.north"]["role"] = "ceo"
                 save_accounts(data)
+            else:
+                logger.info(f"Skipping restore: backup has {backup_users} users, local has {len(data['users'])}.")
+        except json.JSONDecodeError as e:
+            logger.error(f"Backup JSON invalid: {e}")
+            logger.error(f"First 200 chars of backup: {ACCOUNTS_BACKUP[:200]}")
         except Exception as e:
             logger.error(f"Backup restore failed: {e}")
 
