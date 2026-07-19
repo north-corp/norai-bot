@@ -12,7 +12,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
-from flask import Flask, request, jsonify, session, redirect, send_from_directory
+from flask import Flask, request, jsonify, session, redirect
 import requests
 
 # ============================================================
@@ -22,6 +22,7 @@ load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 FLASK_SECRET = os.getenv("FLASK_SECRET", secrets.token_hex(32))
 PORT = int(os.getenv("PORT", 10000))
+ACCOUNTS_BACKUP = os.getenv("ACCOUNTS_BACKUP", "")
 
 CEO_DISCORD_ID      = 779606576616964108
 CHANNEL_BULLETINS   = 1528195910637719692
@@ -47,6 +48,12 @@ QUOTES = [
     '"Trust is earned one delivery at a time."',
 ]
 
+DEFAULT_ROLES = {
+    "ceo":   {"level": 100, "label": "CEO"},
+    "admin": {"level": 50,  "label": "Administrator"},
+    "staff": {"level": 10,  "label": "Staff"},
+}
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [NORAI] %(levelname)s: %(message)s"
@@ -59,9 +66,12 @@ logger = logging.getLogger("NORAI")
 
 def load_accounts():
     if not os.path.exists(ACCOUNTS_FILE):
-        return {"users": {}}
+        return {"roles": dict(DEFAULT_ROLES), "users": {}}
     with open(ACCOUNTS_FILE, "r") as f:
-        return json.load(f)
+        data = json.load(f)
+    if "roles" not in data:
+        data["roles"] = dict(DEFAULT_ROLES)
+    return data
 
 def save_accounts(data):
     with open(ACCOUNTS_FILE, "w") as f:
@@ -76,16 +86,71 @@ def check_password(password, stored):
     salt, h = stored.split("$", 1)
     return hashlib.sha256((salt + password).encode()).hexdigest() == h
 
-def ensure_ceo_account():
+def get_user_level(username, data=None):
+    if data is None:
+        data = load_accounts()
+    user = data["users"].get(username)
+    if not user:
+        return 0
+    role_name = user.get("role", "staff")
+    role = data["roles"].get(role_name, {})
+    return role.get("level", 0)
+
+def get_user_role_label(username, data=None):
+    if data is None:
+        data = load_accounts()
+    user = data["users"].get(username)
+    if not user:
+        return "Unknown"
+    role_name = user.get("role", "staff")
+    role = data["roles"].get(role_name, {})
+    return role.get("label", role_name)
+
+def ensure_defaults():
     data = load_accounts()
-    if "kalvin" not in data["users"]:
-        data["users"]["kalvin"] = {
+
+    # Ensure default roles exist
+    for name, info in DEFAULT_ROLES.items():
+        if name not in data["roles"]:
+            data["roles"][name] = info
+
+    # Ensure CEO account exists
+    if "k.north" not in data["users"]:
+        data["users"]["k.north"] = {
             "password_hash": hash_password("tethlon"),
             "role": "ceo",
             "discord_id": str(CEO_DISCORD_ID)
         }
-        save_accounts(data)
-        logger.info("Created default CEO account (username: kalvin). CHANGE THE PASSWORD.")
+        logger.info("Created default CEO account (username: k.north). CHANGE THE PASSWORD.")
+    else:
+        # Ensure CEO role is locked — in case someone tampered with accounts.json
+        data["users"]["k.north"]["role"] = "ceo"
+
+    save_accounts(data)
+
+    # Restore from backup if env var is set and local file only has defaults
+    if ACCOUNTS_BACKUP:
+        try:
+            backup = json.loads(ACCOUNTS_BACKUP)
+            backup_users = len(backup.get("users", {}))
+            local_users = len(data["users"])
+            if backup_users > local_users:
+                logger.info(f"Restoring accounts from backup ({backup_users} users vs {local_users} local).")
+                data = backup
+                # Still enforce roles
+                if "roles" not in data:
+                    data["roles"] = dict(DEFAULT_ROLES)
+                data["users"]["k.north"]["role"] = "ceo"
+                save_accounts(data)
+        except Exception as e:
+            logger.error(f"Backup restore failed: {e}")
+
+    return data
+
+def get_backup_json():
+    """Return the current accounts.json as a compact JSON string for backup."""
+    data = load_accounts()
+    return json.dumps(data)
 
 # ============================================================
 # FLASK APP
@@ -102,19 +167,21 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated
 
-def ceo_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if "username" not in session:
-            return redirect("/")
-        data = load_accounts()
-        user = data["users"].get(session["username"], {})
-        if user.get("role") != "ceo":
-            return "Access denied. CEO only.", 403
-        return f(*args, **kwargs)
-    return decorated
+def min_level(level):
+    """Decorator: require user role level >= given level."""
+    def decorator(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            if "username" not in session:
+                return redirect("/")
+            lvl = get_user_level(session["username"])
+            if lvl < level:
+                return "Access denied. Insufficient clearance.", 403
+            return f(*args, **kwargs)
+        return decorated
+    return decorator
 
-# -- Styles (shared across pages) --
+# -- Styles --
 BASE_STYLE = """
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -128,11 +195,11 @@ BASE_STYLE = """
   h2 { color: #c45a1a; font-size: 18px; letter-spacing: 2px; margin: 30px 0 16px; }
   h3 { color: #e0e0e0; font-size: 15px; margin-bottom: 10px; }
   label { display: block; color: #888; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; margin: 12px 0 4px; }
-  input, select {
+  input, select, textarea {
     background: #0f0f0f; color: #e0e0e0; border: 1px solid #1a1a1a;
-    padding: 10px 14px; font-family: "Courier New", monospace; font-size: 14px; width: 100%; max-width: 400px;
+    padding: 10px 14px; font-family: "Courier New", monospace; font-size: 14px; width: 100%; max-width: 500px;
   }
-  input:focus, select:focus { border-color: #c45a1a; outline: none; }
+  input:focus, select:focus, textarea:focus { border-color: #c45a1a; outline: none; }
   .btn {
     display: inline-block; background: #c45a1a; color: #0a0a0a;
     font-weight: bold; font-size: 13px; letter-spacing: 2px; text-transform: uppercase;
@@ -146,9 +213,7 @@ BASE_STYLE = """
     letter-spacing: 2px; text-transform: uppercase; padding: 12px 28px; cursor: pointer;
   }
   .btn-ghost:hover { background: #1a1008; }
-  .btn-sm {
-    font-size: 11px; padding: 6px 14px; letter-spacing: 1px;
-  }
+  .btn-sm { font-size: 11px; padding: 6px 14px; letter-spacing: 1px; }
   .btn-danger { background: #8b3030; color: #e0e0e0; border: none; }
   .btn-danger:hover { background: #a04040; }
   .result-box {
@@ -182,6 +247,11 @@ BASE_STYLE = """
   th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #1a1a1a; font-size: 13px; }
   th { color: #666; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; }
   .hidden { display: none; }
+  .backup-box {
+    background: #0f0f0f; border: 1px solid #2a2a0a; padding: 16px;
+    max-height: 200px; overflow-y: auto; font-size: 11px; color: #888;
+    word-break: break-all; white-space: pre-wrap; margin-top: 8px;
+  }
   @media (max-width: 600px) {
     .container { padding: 20px 16px; }
     .result-grid { grid-template-columns: 1fr; }
@@ -189,7 +259,7 @@ BASE_STYLE = """
 </style>
 """
 
-# -- Login Page --
+# -- Login --
 @flask_app.route("/", methods=["GET", "POST"])
 def login_page():
     error = None
@@ -200,7 +270,6 @@ def login_page():
         user = data["users"].get(username)
         if user and check_password(password, user["password_hash"]):
             session["username"] = username
-            session["role"] = user.get("role", "staff")
             return redirect("/calculator")
         error = "Invalid credentials."
 
@@ -217,7 +286,7 @@ def login_page():
 <label>Password</label><input type="password" name="password" required>
 <button type="submit" class="btn">Log In</button>
 </form>
-<p style="color:#666;font-size:12px;margin-top:24px;">No account? Contact CEO Kalvin North.</p>
+<p style="color:#666;font-size:12px;margin-top:24px;">No account? Contact CEO North.</p>
 </div></body></html>"""
 
 # -- Logout --
@@ -231,19 +300,19 @@ def logout_page():
 @login_required
 def calculator_page():
     data = load_accounts()
-    user = data["users"].get(session["username"], {})
-    role = user.get("role", "staff")
-    is_ceo = role == "ceo"
+    user_level = get_user_level(session["username"], data)
+    role_label = get_user_role_label(session["username"], data)
+    is_admin = user_level >= 50
 
     return f"""<!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NORAI Trade Calculator</title>{BASE_STYLE}
 </head><body>
 <div class="container">
-<div class="user-bar">Logged in as: <strong style="color:#c45a1a;">{session['username']}</strong> [{role.upper()}]</div>
+<div class="user-bar">Logged in as: <strong style="color:#c45a1a;">{session['username']}</strong> [{role_label}]</div>
 <div class="nav">
   <a href="/calculator" class="active">Calculator</a>
-  {"<a href='/admin'>Admin</a>" if is_ceo else ""}
+  {"<a href='/admin'>Admin</a>" if is_admin else ""}
   <a href="/settings">Settings</a>
   <a href="/logout" class="logout">Logout</a>
 </div>
@@ -255,21 +324,14 @@ def calculator_page():
   <div class="mode-tab" id="tab-carrier" onclick="switchMode('carrier')">Carrier Mode</div>
 </div>
 
-<!-- PILOT MODE -->
 <div id="mode-pilot">
 <p style="color:#888;margin-bottom:16px;">Calculate profit for an individual pilot buying from a station and selling to a destination (station or carrier).</p>
-
 <label>Commodity</label><input type="text" id="p-commodity" placeholder="e.g. Gold">
-
 <label>Buy Price (CR per ton)</label><input type="number" id="p-buy" placeholder="45000" step="1" min="0">
-
 <label>Sell Price (CR per ton)</label><input type="number" id="p-sell" placeholder="48000" step="1" min="0">
-
 <label>Tonnage</label><input type="number" id="p-tons" placeholder="720" step="1" min="0">
-
-<label>Commission Rate (%)</label><input type="number" id="p-comm" placeholder="15" step="0.1" min="0" max="100">
-<p style="color:#666;font-size:11px;">Percentage of profit taken by carrier as commission.</p>
-
+<label>Commission (CR per ton)</label><input type="number" id="p-comm" placeholder="5000" step="1" min="0">
+<p style="color:#666;font-size:11px;">Flat per-ton commission taken by carrier.</p>
 <button class="btn" onclick="calcPilot()">Calculate</button>
 
 <div class="result-box hidden" id="pilot-result">
@@ -285,30 +347,21 @@ def calculator_page():
 </div>
 </div>
 
-<!-- CARRIER MODE -->
 <div id="mode-carrier" class="hidden">
 <p style="color:#888;margin-bottom:16px;">Calculate full carrier operation: buy at source, pay loading pilots, jump, sell at destination, pay unloading pilots.</p>
-
 <h2>Leg 1 — Loading</h2>
 <label>Commodity</label><input type="text" id="c-commodity" placeholder="e.g. Gold">
-
 <label>Buy Price (CR per ton — what carrier pays at source)</label><input type="number" id="c-buy" placeholder="45000" step="1" min="0">
-
 <label>Tonnage</label><input type="number" id="c-tons" placeholder="720" step="1" min="0">
-
 <label>Loading Pilot Commission (CR per ton)</label><input type="number" id="c-load-comm" placeholder="5000" step="1" min="0">
 <p style="color:#666;font-size:11px;">Paid to pilots hauling cargo onto the carrier at the source station.</p>
-
 <h2>Transit</h2>
 <label>Tritium Cost for Jump (CR)</label><input type="number" id="c-trit" placeholder="0" step="1" min="0" value="0">
 <p style="color:#666;font-size:11px;">Optional — cost of fuel for the carrier jump.</p>
-
 <h2>Leg 2 — Unloading</h2>
 <label>Sell Price (CR per ton — what carrier sells for at destination)</label><input type="number" id="c-sell" placeholder="48000" step="1" min="0">
-
 <label>Unloading Pilot Commission (CR per ton)</label><input type="number" id="c-unload-comm" placeholder="5000" step="1" min="0">
 <p style="color:#666;font-size:11px;">Paid to pilots hauling cargo off the carrier at the destination.</p>
-
 <button class="btn" onclick="calcCarrier()">Calculate</button>
 
 <div class="result-box hidden" id="carrier-result">
@@ -330,7 +383,6 @@ def calculator_page():
 </div>
 </div>
 
-<!-- Inara Lookup -->
 <h2 style="margin-top:40px;">Inara Price Lookup</h2>
 <p style="color:#888;margin-bottom:12px;">Search live commodity prices via your personal Inara API key. Your key stays in your browser — never stored on the server.</p>
 <label>Inara API Key</label>
@@ -342,36 +394,28 @@ def calculator_page():
   <button class="btn btn-sm" onclick="searchInara()" style="margin-top:0;">Search</button>
 </div>
 <div id="inara-result" style="margin-top:16px;"></div>
-
 </div>
 
 <script>
-// Mode switching
 function switchMode(mode) {{
   document.getElementById('tab-pilot').classList.toggle('active', mode==='pilot');
   document.getElementById('tab-carrier').classList.toggle('active', mode==='carrier');
   document.getElementById('mode-pilot').classList.toggle('hidden', mode!=='pilot');
   document.getElementById('mode-carrier').classList.toggle('hidden', mode!=='carrier');
 }}
-
-// Format credits
 function fmt(n) {{ return n.toLocaleString('en-US') + ' CR'; }}
-
-// Pilot calculator
 function calcPilot() {{
   var buy = parseFloat(document.getElementById('p-buy').value) || 0;
   var sell = parseFloat(document.getElementById('p-sell').value) || 0;
   var tons = parseFloat(document.getElementById('p-tons').value) || 0;
   var comm = parseFloat(document.getElementById('p-comm').value) || 0;
   var commName = document.getElementById('p-commodity').value || 'Commodity';
-
   var buyCost = buy * tons;
   var sellRev = sell * tons;
   var gross = sellRev - buyCost;
-  var commAmt = gross * (comm / 100);
+  var commAmt = comm * tons;
   var net = gross - commAmt;
   var ppt = tons > 0 ? net / tons : 0;
-
   document.getElementById('p-commodity-out').textContent = commName;
   document.getElementById('p-buy-cost').textContent = fmt(Math.round(buyCost));
   document.getElementById('p-sell-rev').textContent = fmt(Math.round(sellRev));
@@ -381,8 +425,6 @@ function calcPilot() {{
   document.getElementById('p-ppt').textContent = fmt(Math.round(ppt));
   document.getElementById('pilot-result').classList.remove('hidden');
 }}
-
-// Carrier calculator
 function calcCarrier() {{
   var buy = parseFloat(document.getElementById('c-buy').value) || 0;
   var tons = parseFloat(document.getElementById('c-tons').value) || 0;
@@ -391,7 +433,6 @@ function calcCarrier() {{
   var sell = parseFloat(document.getElementById('c-sell').value) || 0;
   var unloadComm = parseFloat(document.getElementById('c-unload-comm').value) || 0;
   var commName = document.getElementById('c-commodity').value || 'Commodity';
-
   var acqCost = buy * tons;
   var loadCost = loadComm * tons;
   var sellRev = sell * tons;
@@ -400,7 +441,6 @@ function calcCarrier() {{
   var loadPer = loadComm * tons;
   var unloadPer = unloadComm * tons;
   var ppt = tons > 0 ? net / tons : 0;
-
   document.getElementById('c-commodity-out').textContent = commName;
   document.getElementById('c-acq').textContent = fmt(Math.round(acqCost));
   document.getElementById('c-load-cost').textContent = fmt(Math.round(loadCost));
@@ -413,58 +453,36 @@ function calcCarrier() {{
   document.getElementById('c-ppt').textContent = fmt(Math.round(ppt));
   document.getElementById('carrier-result').classList.remove('hidden');
 }}
-
-// Inara search via proxy
 async function searchInara() {{
   var key = document.getElementById('inara-key').value.trim();
   var query = document.getElementById('inara-search').value.trim();
   var resultDiv = document.getElementById('inara-result');
-
   if (!key) {{ resultDiv.innerHTML = '<p class="flash flash-error">Enter your Inara API key first.</p>'; return; }}
   if (!query) {{ resultDiv.innerHTML = '<p class="flash flash-error">Enter a commodity to search.</p>'; return; }}
-
-  // Save key to localStorage
   localStorage.setItem('inara_api_key', key);
-
   resultDiv.innerHTML = '<p style="color:#888;">Searching Inara...</p>';
-
   try {{
     var resp = await fetch('/api/inara-proxy', {{
-      method: 'POST',
-      headers: {{ 'Content-Type': 'application/json' }},
+      method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
       body: JSON.stringify({{ api_key: key, commodity: query }})
     }});
     var data = await resp.json();
-
-    if (data.error) {{
-      resultDiv.innerHTML = '<p class="flash flash-error">' + data.error + '</p>';
-      return;
-    }}
-
+    if (data.error) {{ resultDiv.innerHTML = '<p class="flash flash-error">' + data.error + '</p>'; return; }}
     if (!data.listings || data.listings.length === 0) {{
-      resultDiv.innerHTML = '<p style="color:#888;">No listings found for "' + query + '".</p>';
-      return;
+      resultDiv.innerHTML = '<p style="color:#888;">No listings found for "' + query + '".</p>'; return;
     }}
-
     var html = '<table><thead><tr><th>Station</th><th>System</th><th>Buy/Sell</th><th>Price</th><th>Supply</th><th>Updated</th></tr></thead><tbody>';
     data.listings.forEach(function(l) {{
       html += '<tr>';
-      html += '<td>' + l.station + '</td>';
-      html += '<td>' + l.system + '</td>';
+      html += '<td>' + l.station + '</td><td>' + l.system + '</td>';
       html += '<td style="color:' + (l.is_sell ? '#a04040' : '#6a9a5b') + ';">' + (l.is_sell ? 'Sell' : 'Buy') + '</td>';
-      html += '<td>' + l.price.toLocaleString() + ' CR</td>';
-      html += '<td>' + l.supply.toLocaleString() + '</td>';
-      html += '<td style="color:#666;">' + l.updated + '</td>';
-      html += '</tr>';
+      html += '<td>' + l.price.toLocaleString() + ' CR</td><td>' + l.supply.toLocaleString() + '</td>';
+      html += '<td style="color:#666;">' + l.updated + '</td></tr>';
     }});
     html += '</tbody></table>';
     resultDiv.innerHTML = html;
-  }} catch(e) {{
-    resultDiv.innerHTML = '<p class="flash flash-error">Network error. Try again.</p>';
-  }}
+  }} catch(e) {{ resultDiv.innerHTML = '<p class="flash flash-error">Network error. Try again.</p>'; }}
 }}
-
-// Load saved key on page load
 window.onload = function() {{
   var saved = localStorage.getItem('inara_api_key');
   if (saved) document.getElementById('inara-key').value = saved;
@@ -472,7 +490,7 @@ window.onload = function() {{
 </script>
 </body></html>"""
 
-# -- Settings Page --
+# -- Settings --
 @flask_app.route("/settings", methods=["GET", "POST"])
 @login_required
 def settings_page():
@@ -489,48 +507,50 @@ def settings_page():
         else:
             msg = ("error", "Current password is incorrect.")
 
+    role_label = get_user_role_label(session["username"])
     return f"""<!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Settings — NORAI Trade Calculator</title>{BASE_STYLE}
 </head><body>
 <div class="container">
-<div class="user-bar">Logged in as: <strong style="color:#c45a1a;">{session['username']}</strong></div>
+<div class="user-bar">Logged in as: <strong style="color:#c45a1a;">{session['username']}</strong> [{role_label}]</div>
 <div class="nav">
   <a href="/calculator">Calculator</a>
   <a href="/settings" class="active">Settings</a>
   <a href="/logout" class="logout">Logout</a>
 </div>
-
 <h1>Settings</h1>
 {"<p class='flash flash-" + msg[0] + "'>" + msg[1] + "</p>" if msg else ""}
-
 <form method="POST">
 <h2>Change Password</h2>
 <label>Current Password</label><input type="password" name="current_password" required>
 <label>New Password</label><input type="password" name="new_password" required>
 <button type="submit" class="btn">Update Password</button>
 </form>
-
 <h2>Inara API Key</h2>
 <p style="color:#888;">Your Inara API key is stored in this browser only. The server never sees it except when relaying a search request — and it is never written to disk.</p>
 <p style="color:#666;font-size:12px;">To update it, return to the Calculator page and enter a new key.</p>
-
 </div></body></html>"""
 
 # -- Admin Page --
 @flask_app.route("/admin", methods=["GET", "POST"])
-@ceo_required
+@min_level(50)
 def admin_page():
     msg = None
+    user_level = get_user_level(session["username"])
+    is_ceo = user_level >= 100
+
     if request.method == "POST":
         action = request.form.get("action", "")
         data = load_accounts()
 
-        if action == "add":
+        if action == "add" and user_level >= 50:
             new_user = request.form.get("new_username", "").lower().strip()
             new_pw   = request.form.get("new_password", "")
             new_role = request.form.get("new_role", "staff")
             if new_user and new_pw and new_user not in data["users"]:
+                if new_role not in data["roles"]:
+                    new_role = "staff"
                 data["users"][new_user] = {
                     "password_hash": hash_password(new_pw),
                     "role": new_role,
@@ -541,47 +561,107 @@ def admin_page():
             else:
                 msg = ("error", "Invalid username or username already exists.")
 
-        elif action == "remove":
+        elif action == "remove" and user_level >= 50:
             target = request.form.get("remove_user", "").lower().strip()
-            if target == "kalvin":
+            if target == "k.north":
                 msg = ("error", "Cannot remove the CEO account.")
-            elif target in data["users"]:
-                del data["users"][target]
-                save_accounts(data)
-                msg = ("ok", f"Account '{target}' removed.")
             else:
-                msg = ("error", "User not found.")
+                target_level = get_user_level(target, data)
+                if user_level <= target_level:
+                    msg = ("error", "Cannot remove a user with equal or higher clearance.")
+                elif target in data["users"]:
+                    del data["users"][target]
+                    save_accounts(data)
+                    msg = ("ok", f"Account '{target}' removed.")
+                else:
+                    msg = ("error", "User not found.")
 
-        elif action == "change_role":
+        elif action == "change_role" and user_level >= 50:
             target = request.form.get("role_user", "").lower().strip()
             new_role = request.form.get("role_value", "staff")
-            if target == "kalvin":
+            if target == "k.north":
                 msg = ("error", "Cannot change the CEO role.")
+            elif new_role not in data["roles"]:
+                msg = ("error", "Invalid role.")
             elif target in data["users"]:
-                data["users"][target]["role"] = new_role
-                save_accounts(data)
-                msg = ("ok", f"Role for '{target}' set to '{new_role}'.")
+                target_level = get_user_level(target, data)
+                if user_level <= target_level and not is_ceo:
+                    msg = ("error", "Cannot change role of a user with equal or higher clearance.")
+                else:
+                    data["users"][target]["role"] = new_role
+                    save_accounts(data)
+                    msg = ("ok", f"Role for '{target}' set to '{new_role}'.")
             else:
                 msg = ("error", "User not found.")
 
+        # --- CEO-only actions ---
+        elif action == "add_role" and is_ceo:
+            role_name = request.form.get("role_name", "").lower().strip()
+            role_label = request.form.get("role_label", "").strip()
+            role_level = int(request.form.get("role_level", "10"))
+            if role_name and role_label and role_name not in data["roles"]:
+                if role_name == "ceo":
+                    msg = ("error", "Cannot create a role named 'ceo'.")
+                elif role_level >= 100:
+                    msg = ("error", "Cannot create a role at or above CEO level.")
+                else:
+                    data["roles"][role_name] = {"level": role_level, "label": role_label}
+                    save_accounts(data)
+                    msg = ("ok", f"Role '{role_label}' created.")
+            else:
+                msg = ("error", "Invalid or duplicate role name.")
+
+        elif action == "remove_role" and is_ceo:
+            role_name = request.form.get("remove_role", "").lower().strip()
+            if role_name in ("ceo", "staff"):
+                msg = ("error", "Cannot remove the CEO or Staff roles.")
+            elif role_name in data["roles"]:
+                # Reassign any users with this role to staff
+                for uname, uinfo in data["users"].items():
+                    if uinfo.get("role") == role_name:
+                        uinfo["role"] = "staff"
+                del data["roles"][role_name]
+                save_accounts(data)
+                msg = ("ok", f"Role '{role_name}' removed. Affected users reassigned to Staff.")
+            else:
+                msg = ("error", "Role not found.")
+
     data = load_accounts()
+    role_label = get_user_role_label(session["username"], data)
+
+    # Users table
     users_html = ""
     for name, info in data["users"].items():
-        users_html += f"<tr><td>{name}</td><td>{info['role']}</td><td>{info.get('discord_id','—')}</td></tr>"
+        ur = info.get("role", "staff")
+        rl = data["roles"].get(ur, {}).get("label", ur)
+        users_html += f"<tr><td>{name}</td><td>{rl}</td><td>{info.get('discord_id','—')}</td></tr>"
+
+    # Role select options
+    role_options = "".join(
+        f"<option value='{rn}'>{ri['label']} (Level {ri['level']})</option>"
+        for rn, ri in data["roles"].items()
+    )
+
+    # Roles table
+    roles_html = ""
+    for rn, ri in data["roles"].items():
+        roles_html += f"<tr><td>{ri['label']}</td><td>{rn}</td><td>{ri['level']}</td></tr>"
+
+    # Backup JSON
+    backup_json = get_backup_json()
 
     return f"""<!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Admin — NORAI Trade Calculator</title>{BASE_STYLE}
 </head><body>
 <div class="container">
-<div class="user-bar">Logged in as: <strong style="color:#c45a1a;">{session['username']}</strong> [CEO]</div>
+<div class="user-bar">Logged in as: <strong style="color:#c45a1a;">{session['username']}</strong> [{role_label}]</div>
 <div class="nav">
   <a href="/calculator">Calculator</a>
   <a href="/admin" class="active">Admin</a>
   <a href="/settings">Settings</a>
   <a href="/logout" class="logout">Logout</a>
 </div>
-
 <h1>Account Management</h1>
 {"<p class='flash flash-" + msg[0] + "'>" + msg[1] + "</p>" if msg else ""}
 
@@ -596,11 +676,7 @@ def admin_page():
 <input type="hidden" name="action" value="add">
 <label>Username</label><input type="text" name="new_username" required>
 <label>Password</label><input type="password" name="new_password" required>
-<label>Role</label>
-<select name="new_role">
-  <option value="staff">Staff</option>
-  <option value="ceo">CEO</option>
-</select>
+<label>Role</label><select name="new_role">{role_options}</select>
 <button type="submit" class="btn">Create Account</button>
 </form>
 
@@ -615,22 +691,32 @@ def admin_page():
 <form method="POST">
 <input type="hidden" name="action" value="change_role">
 <label>Username</label><input type="text" name="role_user" required>
-<label>New Role</label>
-<select name="role_value">
-  <option value="staff">Staff</option>
-  <option value="ceo">CEO</option>
-</select>
+<label>New Role</label><select name="role_value">{role_options}</select>
 <button type="submit" class="btn">Change Role</button>
 </form>
 
-</div></body></html>"""
+{"<!-- ===== CEO-ONLY SECTION ===== -->" if is_ceo else ""}
+{"<hr style='border-color:#1a1a1a;margin:40px 0;'>" if is_ceo else ""}
+{"<h2 style='color:#c45a1a;'>Role Management [CEO]</h2>" if is_ceo else ""}
 
-# -- Health Endpoint --
+{"<h3>Current Roles</h3><table><thead><tr><th>Label</th><th>Name</th><th>Level</th></tr></thead><tbody>" + roles_html + "</tbody></table>" if is_ceo else ""}
+
+{"<h3>Add New Role</h3><form method='POST'><input type='hidden' name='action' value='add_role'><label>Role Name (internal, lowercase)</label><input type='text' name='role_name' required><label>Display Label</label><input type='text' name='role_label' required><label>Clearance Level (1-99)</label><input type='number' name='role_level' value='30' min='1' max='99'><button type='submit' class='btn'>Create Role</button></form>" if is_ceo else ""}
+
+{"<h3>Remove Role</h3><form method='POST'><input type='hidden' name='action' value='remove_role'><label>Role Name</label><input type='text' name='remove_role' required><button type='submit' class='btn btn-danger btn-sm'>Remove Role</button></form><p style='color:#666;font-size:11px;'>Users with this role will be reassigned to Staff.</p>" if is_ceo else ""}
+
+{"<h3>Export Backup</h3><p style='color:#888;'>Copy this JSON and paste it into the <code>ACCOUNTS_BACKUP</code> environment variable in Render. This protects against data loss on service restart.</p><div class='backup-box' id='backup-json'>" + backup_json + "</div><button class='btn btn-sm' onclick='copyBackup()' style='margin-top:8px;'>Copy to Clipboard</button>" if is_ceo else ""}
+
+</div>
+{"<script>function copyBackup() {{ var text = document.getElementById('backup-json').innerText; navigator.clipboard.writeText(text).then(function() {{ alert('Backup copied to clipboard.'); }}); }}</script>" if is_ceo else ""}
+</body></html>"""
+
+# -- Health --
 @flask_app.route("/health")
 def health():
     return "NORAI operational."
 
-# -- Inara API Proxy --
+# -- Inara Proxy --
 INARA_API_URL = "https://inara.cz/inapi/v1/"
 
 @flask_app.route("/api/inara-proxy", methods=["POST"])
@@ -639,10 +725,8 @@ def inara_proxy():
     data = request.get_json()
     api_key = data.get("api_key", "").strip()
     commodity = data.get("commodity", "").strip()
-
     if not api_key or not commodity:
         return jsonify({"error": "API key and commodity are required."})
-
     payload = {
         "header": {
             "appName": "NORAI Trade Calculator",
@@ -652,21 +736,16 @@ def inara_proxy():
         "events": [{
             "eventName": "getCommodityMarket",
             "eventTimestamp": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "eventData": {
-                "commodityName": commodity
-            }
+            "eventData": {"commodityName": commodity}
         }]
     }
-
     try:
         resp = requests.post(INARA_API_URL, json=payload, timeout=15)
         result = resp.json()
-
         listings = []
         events = result.get("events", [])
         if events:
-            market_data = events[0].get("eventData", [])
-            for entry in market_data:
+            for entry in events[0].get("eventData", []):
                 listings.append({
                     "station": entry.get("stationName", "Unknown"),
                     "system": entry.get("starsystemName", "Unknown"),
@@ -675,12 +754,8 @@ def inara_proxy():
                     "supply": entry.get("commodityStock", 0),
                     "updated": entry.get("updateTime", "N/A")
                 })
-
-        # Sort: sell prices descending, buy prices ascending
         listings.sort(key=lambda x: (not x["is_sell"], -x["price"] if x["is_sell"] else x["price"]))
-
         return jsonify({"listings": listings[:20]})
-
     except requests.RequestException as e:
         logger.error(f"Inara proxy error: {e}")
         return jsonify({"error": "Could not reach Inara API. Try again later."})
@@ -689,7 +764,7 @@ def inara_proxy():
         return jsonify({"error": "Unexpected response from Inara. Check your API key."})
 
 # ============================================================
-# DISCORD BOT (identical to v1.0 + /trade command)
+# DISCORD BOT
 # ============================================================
 
 WELCOME_MESSAGE = """**NORTHCORP [NINC] — INCOMING TRANSMISSION**
@@ -832,7 +907,6 @@ async def on_message(message: discord.Message):
         return
     await bot.process_commands(message)
     content = message.content.lower().strip()
-
     if content in ("hello norai", "norai", "norai, hello"):
         await message.channel.send(
             f"On station, {message.author.display_name}. "
@@ -1000,7 +1074,7 @@ Buy Cost:     {fmt_cr(buy_cost)}
 Sell Revenue: {fmt_cr(sell_rev)}
 Gross Margin: {fmt_cr(gross)}
 Comm ({commission:,.0f} CR/t):  {fmt_cr(comm_amt)}
-─────────────────────────
+---
 Net Profit:   {fmt_cr(net)}
 Profit/Ton:   {fmt_cr(ppt)}
 ```
@@ -1107,7 +1181,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 # ============================================================
 
 def start_flask():
-    ensure_ceo_account()
+    ensure_defaults()
     flask_app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
 
 if __name__ == "__main__":
@@ -1115,9 +1189,7 @@ if __name__ == "__main__":
         logger.critical("DISCORD_TOKEN not found in .env file.")
         exit(1)
 
-    # Start Flask in a daemon thread
     threading.Thread(target=start_flask, daemon=True).start()
     logger.info(f"Flask started on port {PORT}.")
 
-    # Run Discord bot (blocks until exit)
     bot.run(TOKEN)
