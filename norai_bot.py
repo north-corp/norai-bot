@@ -2,26 +2,15 @@ import os
 import json
 import random
 import logging
+import threading
 from datetime import datetime
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
 import requests
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
-
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"NORAI operational.")
-
-def start_health_server():
-    port = int(os.getenv("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", port), HealthHandler)
-    server.serve_forever()
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -54,6 +43,20 @@ logging.basicConfig(
     format="%(asctime)s [NORAI] %(levelname)s: %(message)s"
 )
 logger = logging.getLogger("NORAI")
+
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"NORAI operational.")
+
+
+def start_health_server():
+    port = int(os.getenv("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    server.serve_forever()
+
 
 WELCOME_MESSAGE = """**NORTHCORP [NINC] — INCOMING TRANSMISSION**
 
@@ -157,10 +160,8 @@ class NORAIBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        guild = discord.Object(id=GUILD_ID)
-        self.tree.copy_global_to(guild=guild)
-        await self.tree.sync(guild=guild)
-        logger.info("Slash commands synced to guild.")
+        logger.info("Setup complete. Skipping command sync to avoid rate limits.")
+
 
 bot = NORAIBot()
 
@@ -224,6 +225,19 @@ async def on_message(message: discord.Message):
             "Acknowledged. Forward your gratitude to CEO North — "
             "he built this operation from the ground up."
         )
+
+
+@bot.command(name="sync")
+async def cmd_sync(ctx: commands.Context):
+    """[CEO] Manually sync slash commands to this guild."""
+    if ctx.author.id != CEO_DISCORD_ID:
+        await ctx.send("Access denied.")
+        return
+    await ctx.send("Syncing commands...")
+    guild = discord.Object(id=GUILD_ID)
+    bot.tree.copy_global_to(guild=guild)
+    await bot.tree.sync(guild=guild)
+    await ctx.send("Commands synced.")
 
 
 @bot.tree.command(name="status", description="NORAI system status and current operations.")
@@ -460,6 +474,7 @@ async def on_app_command_error(
             "Internal error. Notify CEO North.",
             ephemeral=True
         )
+
 
 threading.Thread(target=start_health_server, daemon=True).start()
 
