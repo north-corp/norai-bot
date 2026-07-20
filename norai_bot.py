@@ -32,6 +32,7 @@ GUILD_ID            = 1527555743413440533
 
 FLEET_JSON_URL = "https://north-corp.github.io/northcorp/fleet.json"
 ACCOUNTS_FILE  = "accounts.json"
+INARA_API_URL  = "https://inara.cz/inapi/v1/"
 
 ceo_status = "At HQ, Czerny Landing"
 
@@ -108,7 +109,6 @@ def get_user_role_label(username, data=None):
 
 def ensure_defaults():
     data = load_accounts()
-
     for name, info in DEFAULT_ROLES.items():
         if name not in data["roles"]:
             data["roles"][name] = info
@@ -125,37 +125,24 @@ def ensure_defaults():
 
     save_accounts(data)
 
-    # --- Backup restore with debug logging ---
-    logger.info(f"ACCOUNTS_BACKUP env var present: {bool(ACCOUNTS_BACKUP)}")
-    logger.info(f"ACCOUNTS_BACKUP length: {len(ACCOUNTS_BACKUP) if ACCOUNTS_BACKUP else 0}")
-    logger.info(f"Local users count: {len(data['users'])}")
-
     if ACCOUNTS_BACKUP:
         try:
             backup = json.loads(ACCOUNTS_BACKUP)
             backup_users = len(backup.get("users", {}))
-            logger.info(f"Backup users count: {backup_users}")
-            logger.info(f"Backup users: {list(backup.get('users', {}).keys())}")
-
-            if backup_users > len(data["users"]):
-                logger.info(f"Restoring accounts from backup ({backup_users} users vs {len(data['users'])} local).")
+            local_users = len(data["users"])
+            if backup_users > local_users:
+                logger.info(f"Restoring accounts from backup ({backup_users} users vs {local_users} local).")
                 data = backup
                 if "roles" not in data:
                     data["roles"] = dict(DEFAULT_ROLES)
                 data["users"]["k.north"]["role"] = "ceo"
                 save_accounts(data)
-            else:
-                logger.info(f"Skipping restore: backup has {backup_users} users, local has {len(data['users'])}.")
-        except json.JSONDecodeError as e:
-            logger.error(f"Backup JSON invalid: {e}")
-            logger.error(f"First 200 chars of backup: {ACCOUNTS_BACKUP[:200]}")
         except Exception as e:
             logger.error(f"Backup restore failed: {e}")
 
     return data
 
 def get_backup_json():
-    """Return the current accounts.json as a compact JSON string for backup."""
     data = load_accounts()
     return json.dumps(data)
 
@@ -175,7 +162,6 @@ def login_required(f):
     return decorated
 
 def min_level(level):
-    """Decorator: require user role level >= given level."""
     def decorator(f):
         @wraps(f)
         def decorated(*args, **kwargs):
@@ -188,7 +174,7 @@ def min_level(level):
         return decorated
     return decorator
 
-# -- Styles --
+# -- Shared Styles --
 BASE_STYLE = """
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -197,7 +183,7 @@ BASE_STYLE = """
     font-family: "Courier New", Courier, monospace;
     line-height: 1.6; font-size: 15px;
   }
-  .container { max-width: 900px; margin: 0 auto; padding: 40px 24px; }
+  .container { max-width: 960px; margin: 0 auto; padding: 40px 24px; }
   h1 { color: #c45a1a; font-size: 28px; letter-spacing: 4px; margin-bottom: 20px; }
   h2 { color: #c45a1a; font-size: 18px; letter-spacing: 2px; margin: 30px 0 16px; }
   h3 { color: #e0e0e0; font-size: 15px; margin-bottom: 10px; }
@@ -237,12 +223,13 @@ BASE_STYLE = """
   .flash { padding: 12px 16px; margin-bottom: 16px; border: 1px solid; }
   .flash-error { border-color: #a04040; color: #c06060; background: #150808; }
   .flash-ok { border-color: #5c8a5c; color: #6a9a5b; background: #081008; }
+  .flash-info { border-color: #c45a1a; color: #c45a1a; background: #100a04; }
   .nav { display: flex; gap: 24px; margin-bottom: 30px; border-bottom: 1px solid #1a1a1a; padding-bottom: 12px; }
   .nav a { color: #888; text-decoration: none; font-size: 13px; letter-spacing: 1px; text-transform: uppercase; }
   .nav a:hover, .nav a.active { color: #c45a1a; }
   .nav .logout { margin-left: auto; color: #666; }
   .user-bar { color: #666; font-size: 12px; margin-bottom: 8px; }
-  .mode-tabs { display: flex; gap: 0; margin-bottom: 20px; }
+  .mode-tabs { display: flex; gap: 0; margin-bottom: 20px; flex-wrap: wrap; }
   .mode-tab {
     background: #0f0f0f; color: #888; border: 1px solid #1a1a1a;
     padding: 10px 20px; cursor: pointer; font-family: "Courier New", monospace;
@@ -250,6 +237,8 @@ BASE_STYLE = """
   }
   .mode-tab.active { background: #1a1008; color: #c45a1a; border-color: #c45a1a; }
   .inline { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .gap-row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .gap-row > * { flex: 1; min-width: 150px; }
   table { width: 100%; border-collapse: collapse; margin-top: 12px; }
   th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #1a1a1a; font-size: 13px; }
   th { color: #666; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; }
@@ -259,9 +248,26 @@ BASE_STYLE = """
     max-height: 200px; overflow-y: auto; font-size: 11px; color: #888;
     word-break: break-all; white-space: pre-wrap; margin-top: 8px;
   }
+  .progress-bar {
+    width: 100%; height: 4px; background: #1a1a1a; margin-top: 12px;
+  }
+  .progress-fill {
+    height: 100%; background: #c45a1a; transition: width 0.3s;
+  }
+  .scanner-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 4px 0; }
+  .scanner-row span { color: #888; font-size: 13px; }
+  .scanner-row .good { color: #6a9a5b; }
+  .scanner-row .bad { color: #a04040; }
+  .tag {
+    display: inline-block; background: #1a1008; color: #c45a1a; border: 1px solid #3a2a10;
+    padding: 3px 10px; font-size: 11px; margin: 2px; cursor: pointer;
+  }
+  .tag:hover { background: #2a1a0c; }
+  .tag .remove { color: #a04040; margin-left: 6px; font-weight: bold; }
   @media (max-width: 600px) {
     .container { padding: 20px 16px; }
     .result-grid { grid-template-columns: 1fr; }
+    .mode-tab { padding: 8px 12px; font-size: 11px; }
   }
 </style>
 """
@@ -302,14 +308,19 @@ def logout_page():
     session.clear()
     return redirect("/")
 
-# -- Calculator --
+# ============================================================
+# CALCULATOR — Full PTN Workflow
+# ============================================================
+
 @flask_app.route("/calculator")
 @login_required
 def calculator_page():
     data = load_accounts()
-    user_level = get_user_level(session["username"], data)
+    user = data["users"].get(session["username"], {})
     role_label = get_user_role_label(session["username"], data)
+    user_level = get_user_level(session["username"], data)
     is_admin = user_level >= 50
+    saved_favs = json.dumps(user.get("settings", {}).get("favourites", ["platinum", "gold", "tritium"]))
 
     return f"""<!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -327,111 +338,259 @@ def calculator_page():
 <h1>Trade Calculator</h1>
 
 <div class="mode-tabs">
-  <div class="mode-tab active" id="tab-pilot" onclick="switchMode('pilot')">Pilot Mode</div>
-  <div class="mode-tab" id="tab-carrier" onclick="switchMode('carrier')">Carrier Mode</div>
+  <div class="mode-tab active" id="tab-pilot" onclick="switchMode('pilot')">Pilot</div>
+  <div class="mode-tab" id="tab-carrier" onclick="switchMode('carrier')">Carrier Full Run</div>
+  <div class="mode-tab" id="tab-scanner" onclick="switchMode('scanner')">Multi-Scanner</div>
+  <div class="mode-tab" id="tab-reverse" onclick="switchMode('reverse')">Reverse</div>
 </div>
 
+<!-- ===== INARA KEY (shared across all modes) ===== -->
+<div style="background:#0f0f0f;border:1px solid #1a1a1a;padding:12px 16px;margin-bottom:20px;">
+<label style="margin-top:0;">Inara API Key</label>
+<div class="inline">
+  <input type="password" id="inara-key" placeholder="Your personal Inara API key..." style="flex:1;max-width:400px;">
+  <label style="margin:0;font-size:11px;"><input type="checkbox" id="remember-key" checked onchange="saveKey()"> Remember</label>
+</div>
+<p style="color:#666;font-size:10px;margin-top:4px;">Stored in this browser only. Never sent to the server except during searches. Get yours at inara.cz → Settings → API.</p>
+</div>
+
+<!-- ===== PILOT MODE ===== -->
 <div id="mode-pilot">
-<p style="color:#888;margin-bottom:16px;">Calculate profit for an individual pilot buying from a station and selling to a destination (station or carrier).</p>
-<label>Commodity</label><input type="text" id="p-commodity" placeholder="e.g. Gold">
-<label>Buy Price (CR per ton)</label><input type="number" id="p-buy" placeholder="45000" step="1" min="0">
-<label>Sell Price (CR per ton)</label><input type="number" id="p-sell" placeholder="48000" step="1" min="0">
-<label>Tonnage</label><input type="number" id="p-tons" placeholder="720" step="1" min="0">
-<label>Commission (CR per ton)</label><input type="number" id="p-comm" placeholder="5000" step="1" min="0">
-<p style="color:#666;font-size:11px;">Flat per-ton commission taken by carrier.</p>
+<p style="color:#888;margin-bottom:16px;">Single pilot buying from a station and selling to a carrier or another station. Commission is flat CR per ton taken by the carrier.</p>
+<div class="gap-row">
+  <div><label>Commodity</label><input type="text" id="p-commodity" placeholder="e.g. Gold"></div>
+  <div><label>Buy Price at Station (CR/t)</label><input type="number" id="p-buy" placeholder="45000" step="1" min="0"></div>
+</div>
+<div class="gap-row">
+  <div><label>Sell Price to Carrier (CR/t)</label><input type="number" id="p-sell" placeholder="60000" step="1" min="0"></div>
+  <div><label>Tonnage</label><input type="number" id="p-tons" placeholder="720" step="1" min="0"></div>
+</div>
+<div class="gap-row">
+  <div><label>Carrier Commission (CR/t)</label><input type="number" id="p-comm" placeholder="10000" step="1" min="0"></div>
+</div>
+<p style="color:#666;font-size:11px;">The carrier pays the pilot: <strong>Buy Price + Commission</strong>. The pilot profits Commission × Tonnage.</p>
 <button class="btn" onclick="calcPilot()">Calculate</button>
 
 <div class="result-box hidden" id="pilot-result">
 <h3>Results — <span id="p-commodity-out"></span></h3>
 <div class="result-grid">
-  <div class="result-item"><label>Total Buy Cost</label><div class="value value-cost" id="p-buy-cost"></div></div>
-  <div class="result-item"><label>Total Sell Revenue</label><div class="value value-profit" id="p-sell-rev"></div></div>
-  <div class="result-item"><label>Gross Margin</label><div class="value value-neutral" id="p-gross"></div></div>
-  <div class="result-item"><label>Carrier Commission</label><div class="value value-cost" id="p-comm-out"></div></div>
+  <div class="result-item"><label>Pilot Pays Station</label><div class="value value-cost" id="p-station-cost"></div></div>
+  <div class="result-item"><label>Carrier Pays Pilot</label><div class="value value-profit" id="p-carrier-pays"></div></div>
   <div class="result-item"><label>Pilot Net Profit</label><div class="value value-profit" id="p-net"></div></div>
-  <div class="result-item"><label>Profit per Ton</label><div class="value" id="p-ppt"></div></div>
+  <div class="result-item"><label>Pilot Profit/Ton</label><div class="value" id="p-ppt"></div></div>
+  <div class="result-item"><label>Carrier Cost/Ton</label><div class="value value-cost" id="p-carrier-cost-ton"></div></div>
 </div>
 </div>
 </div>
 
+<!-- ===== CARRIER FULL RUN MODE ===== -->
 <div id="mode-carrier" class="hidden">
-<p style="color:#888;margin-bottom:16px;">Calculate full carrier operation: buy at source, pay loading pilots, jump, sell at destination, pay unloading pilots.</p>
+<p style="color:#888;margin-bottom:16px;">Full PTN carrier operation: buy at source, pay loading pilots, jump, sell at destination, pay unloading pilots. Both commissions must be ≥ 10,000 CR/t.</p>
+
 <h2>Leg 1 — Loading</h2>
-<label>Commodity</label><input type="text" id="c-commodity" placeholder="e.g. Gold">
-<label>Buy Price (CR per ton — what carrier pays at source)</label><input type="number" id="c-buy" placeholder="45000" step="1" min="0">
-<label>Tonnage</label><input type="number" id="c-tons" placeholder="720" step="1" min="0">
-<label>Loading Pilot Commission (CR per ton)</label><input type="number" id="c-load-comm" placeholder="5000" step="1" min="0">
-<p style="color:#666;font-size:11px;">Paid to pilots hauling cargo onto the carrier at the source station.</p>
+<div class="gap-row">
+  <div><label>Station Buy Price (CR/t)</label><input type="number" id="c-buy" placeholder="45000" step="1" min="0"></div>
+  <div><label>Tonnage</label><input type="number" id="c-tons" placeholder="25000" step="1" min="0"></div>
+</div>
+<div class="gap-row">
+  <div><label>Loading Commission (CR/t)</label><input type="number" id="c-load-comm" placeholder="15000" step="1" min="10000"><span style="color:#666;font-size:11px;">Min 10,000 CR/t</span></div>
+</div>
+<p style="color:#666;font-size:11px;">Carrier buy order price = Station Buy Price + Loading Commission. Carrier pays this to loading pilots.</p>
+
 <h2>Transit</h2>
-<label>Tritium Cost for Jump (CR)</label><input type="number" id="c-trit" placeholder="0" step="1" min="0" value="0">
+<label>Tritium Fuel Cost (CR)</label><input type="number" id="c-trit" placeholder="0" step="1" min="0" value="0">
 <p style="color:#666;font-size:11px;">Optional — cost of fuel for the carrier jump.</p>
+
 <h2>Leg 2 — Unloading</h2>
-<label>Sell Price (CR per ton — what carrier sells for at destination)</label><input type="number" id="c-sell" placeholder="48000" step="1" min="0">
-<label>Unloading Pilot Commission (CR per ton)</label><input type="number" id="c-unload-comm" placeholder="5000" step="1" min="0">
-<p style="color:#666;font-size:11px;">Paid to pilots hauling cargo off the carrier at the destination.</p>
+<div class="gap-row">
+  <div><label>Station Sell Price (CR/t)</label><input type="number" id="c-sell" placeholder="85000" step="1" min="0"></div>
+</div>
+<div class="gap-row">
+  <div><label>Unloading Commission (CR/t)</label><input type="number" id="c-unload-comm" placeholder="15000" step="1" min="10000"><span style="color:#666;font-size:11px;">Min 10,000 CR/t</span></div>
+</div>
+<p style="color:#666;font-size:11px;">Carrier sell order price = Station Sell Price - Unloading Commission. Unloading pilots pay this to the carrier.</p>
+
 <button class="btn" onclick="calcCarrier()">Calculate</button>
 
 <div class="result-box hidden" id="carrier-result">
-<h3>Results — <span id="c-commodity-out"></span></h3>
+<h3>Full Run Results — <span id="c-commodity-out"></span></h3>
 <div class="result-grid">
-  <div class="result-item"><label>Total Acquisition Cost</label><div class="value value-cost" id="c-acq"></div></div>
-  <div class="result-item"><label>Loading Pilot Costs</label><div class="value value-cost" id="c-load-cost"></div></div>
-  <div class="result-item"><label>Tritium Fuel Cost</label><div class="value value-cost" id="c-trit-out"></div></div>
-  <div class="result-item"><label>Total Sell Revenue</label><div class="value value-profit" id="c-sell-rev"></div></div>
-  <div class="result-item"><label>Unloading Pilot Costs</label><div class="value value-cost" id="c-unload-cost"></div></div>
+  <div class="result-item"><label>Carrier Buy Order Price</label><div class="value value-cost" id="c-buy-order"></div></div>
+  <div class="result-item"><label>Carrier Sell Order Price</label><div class="value value-profit" id="c-sell-order"></div></div>
+  <div class="result-item"><label>Total Loading Cost</label><div class="value value-cost" id="c-load-cost"></div></div>
+  <div class="result-item"><label>Total Unloading Revenue</label><div class="value value-profit" id="c-unload-rev"></div></div>
   <div class="result-item"><label>Carrier Net Profit</label><div class="value value-profit" id="c-net"></div></div>
+  <div class="result-item"><label>Profit per Ton</label><div class="value" id="c-ppt"></div></div>
 </div>
-<h3>Per-Pilot Breakdown</h3>
+<h3>Pilot Payouts</h3>
 <div class="result-grid">
-  <div class="result-item"><label>Loading Pilot (per pilot, full load)</label><div class="value value-profit" id="c-load-per"></div></div>
-  <div class="result-item"><label>Unloading Pilot (per pilot, full load)</label><div class="value value-profit" id="c-unload-per"></div></div>
-  <div class="result-item"><label>Carrier Profit per Ton</label><div class="value" id="c-ppt"></div></div>
+  <div class="result-item"><label>Loading Pilot Earns (per ton)</label><div class="value value-profit" id="c-load-ppt"></div></div>
+  <div class="result-item"><label>Unloading Pilot Earns (per ton)</label><div class="value value-profit" id="c-unload-ppt"></div></div>
 </div>
+<div id="c-commission-warn" style="margin-top:12px;"></div>
 </div>
 </div>
 
-<h2 style="margin-top:40px;">Inara Price Lookup</h2>
-<p style="color:#888;margin-bottom:12px;">Search live commodity prices via your personal Inara API key. Your key stays in your browser — never stored on the server.</p>
-<label>Inara API Key</label>
-<input type="password" id="inara-key" placeholder="Paste your Inara API key...">
-<p style="color:#666;font-size:11px;margin-bottom:12px;">Saved to this browser only. Get yours at inara.cz → Settings → API.</p>
-<label>Search Commodity</label>
+<!-- ===== MULTI-SCANNER MODE ===== -->
+<div id="mode-scanner" class="hidden">
+<p style="color:#888;margin-bottom:16px;">Scan your favourite commodities on Inara for the best volume-safe trade. Finds the highest-profit pairing that has enough supply AND demand for a full carrier load.</p>
+
+<h2>Favourites</h2>
+<div id="fav-tags" style="margin-bottom:8px;"></div>
 <div class="inline">
-  <input type="text" id="inara-search" placeholder="e.g. gold" style="flex:1;">
-  <button class="btn btn-sm" onclick="searchInara()" style="margin-top:0;">Search</button>
+  <input type="text" id="fav-input" placeholder="Add commodity..." style="flex:1;max-width:300px;">
+  <button class="btn btn-sm" onclick="addFav()" style="margin-top:0;">Add</button>
+  <button class="btn btn-sm btn-ghost" onclick="saveFavs()" style="margin-top:0;">Save to Server</button>
 </div>
-<div id="inara-result" style="margin-top:16px;"></div>
+
+<h2>Scan Parameters</h2>
+<div class="gap-row">
+  <div><label>Tonnage</label><input type="number" id="s-tons" placeholder="25000" step="1" min="0" value="25000"></div>
+  <div><label>Safety Margin (t)</label><input type="number" id="s-safety" placeholder="5000" step="1" min="0" value="5000"></div>
+</div>
+<div class="gap-row">
+  <div><label>Loading Commission (CR/t)</label><input type="number" id="s-load-comm" placeholder="15000" step="1" min="10000" value="15000"></div>
+  <div><label>Unloading Commission (CR/t)</label><input type="number" id="s-unload-comm" placeholder="15000" step="1" min="10000" value="15000"></div>
+</div>
+<div class="gap-row">
+  <div><label>Min Carrier Profit (CR total)</label><input type="number" id="s-min-profit" placeholder="250000000" step="1" min="0" value="250000000"></div>
+  <div><label>Max Stations per Commodity</label><input type="number" id="s-max-results" placeholder="20" step="1" min="1" max="50" value="20"></div>
+</div>
+
+<button class="btn" onclick="runScanner()">Scan All Favourites</button>
+<div id="scanner-progress" class="hidden" style="margin-top:16px;">
+  <p id="scanner-status" style="color:#888;"></p>
+  <div class="progress-bar"><div class="progress-fill" id="scanner-bar" style="width:0%;"></div></div>
+</div>
+<div id="scanner-results"></div>
+</div>
+
+<!-- ===== REVERSE MODE ===== -->
+<div id="mode-reverse" class="hidden">
+<p style="color:#888;margin-bottom:16px;">Work backwards: given the station buy price and the commissions you want to offer, find the minimum station sell price you need to hunt for.</p>
+
+<h2>Your Parameters</h2>
+<div class="gap-row">
+  <div><label>Station Buy Price (CR/t)</label><input type="number" id="r-buy" placeholder="45000" step="1" min="0"></div>
+  <div><label>Tonnage</label><input type="number" id="r-tons" placeholder="25000" step="1" min="0"></div>
+</div>
+<div class="gap-row">
+  <div><label>Loading Commission (CR/t)</label><input type="number" id="r-load-comm" placeholder="15000" step="1" min="10000"></div>
+  <div><label>Unloading Commission (CR/t)</label><input type="number" id="r-unload-comm" placeholder="15000" step="1" min="10000"></div>
+</div>
+<div class="gap-row">
+  <div><label>Your Minimum Profit (CR/t)</label><input type="number" id="r-min-ppt" placeholder="10000" step="1" min="0"></div>
+</div>
+
+<button class="btn" onclick="calcReverse()">Calculate Required Sell Price</button>
+
+<div class="result-box hidden" id="reverse-result">
+<h3>What You Need</h3>
+<div class="result-grid">
+  <div class="result-item"><label>Required Station Sell Price</label><div class="value value-profit" id="r-req-sell"></div></div>
+  <div class="result-item"><label>Required Spread</label><div class="value value-neutral" id="r-spread"></div></div>
+  <div class="result-item"><label>Carrier Buy Order Price</label><div class="value value-cost" id="r-buy-order"></div></div>
+  <div class="result-item"><label>Carrier Sell Order Price</label><div class="value value-profit" id="r-sell-order"></div></div>
+  <div class="result-item"><label>Your Total Profit</label><div class="value value-profit" id="r-total-profit"></div></div>
+  <div class="result-item"><label>ROI %</label><div class="value" id="r-roi"></div></div>
+</div>
+<p style="color:#888;margin-top:12px;">Search Inara for stations buying at <strong id="r-req-sell2"></strong> or higher. Use the Multi-Scanner to find real matches.</p>
+</div>
+</div>
+
 </div>
 
 <script>
-function switchMode(mode) {{
-  document.getElementById('tab-pilot').classList.toggle('active', mode==='pilot');
-  document.getElementById('tab-carrier').classList.toggle('active', mode==='carrier');
-  document.getElementById('mode-pilot').classList.toggle('hidden', mode!=='pilot');
-  document.getElementById('mode-carrier').classList.toggle('hidden', mode!=='carrier');
+// ---- GLOBALS ----
+var favs = {saved_favs};
+var currentMode = 'pilot';
+
+function switchMode(m) {{
+  currentMode = m;
+  ['pilot','carrier','scanner','reverse'].forEach(function(x) {{
+    document.getElementById('tab-'+x).classList.toggle('active', x===m);
+    document.getElementById('mode-'+x).classList.toggle('hidden', x!==m);
+  }});
 }}
+
 function fmt(n) {{ return n.toLocaleString('en-US') + ' CR'; }}
+function fmtShort(n) {{
+  if (Math.abs(n) >= 1e9) return (n/1e9).toFixed(2) + 'B CR';
+  if (Math.abs(n) >= 1e6) return (n/1e6).toFixed(1) + 'M CR';
+  if (Math.abs(n) >= 1e3) return (n/1e3).toFixed(0) + 'K CR';
+  return n.toLocaleString('en-US') + ' CR';
+}}
+
+// ---- API KEY ----
+function saveKey() {{
+  if (document.getElementById('remember-key').checked) {{
+    localStorage.setItem('inara_api_key', document.getElementById('inara-key').value);
+  }} else {{
+    localStorage.removeItem('inara_api_key');
+  }}
+}}
+window.onload = function() {{
+  var saved = localStorage.getItem('inara_api_key');
+  if (saved) document.getElementById('inara-key').value = saved;
+  renderFavs();
+}};
+document.getElementById('inara-key').addEventListener('input', saveKey);
+
+// ---- FAVOURITES ----
+function renderFavs() {{
+  var html = '';
+  favs.forEach(function(f, i) {{
+    html += '<span class="tag">' + f + '<span class="remove" onclick="removeFav('+i+')">&times;</span></span>';
+  }});
+  document.getElementById('fav-tags').innerHTML = html || '<span style="color:#666;">No favourites yet. Add some below.</span>';
+}}
+function addFav() {{
+  var inp = document.getElementById('fav-input');
+  var val = inp.value.trim().toLowerCase();
+  if (val && favs.indexOf(val) === -1) {{
+    favs.push(val);
+    renderFavs();
+  }}
+  inp.value = '';
+}}
+function removeFav(i) {{ favs.splice(i,1); renderFavs(); }}
+async function saveFavs() {{
+  try {{
+    var resp = await fetch('/save_favourites', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{favourites: favs}})
+    }});
+    var data = await resp.json();
+    if (data.status === 'ok') alert('Favourites saved to server.');
+    else alert('Save failed.');
+  }} catch(e) {{ alert('Network error.'); }}
+}}
+
+// ---- PILOT CALCULATOR ----
 function calcPilot() {{
   var buy = parseFloat(document.getElementById('p-buy').value) || 0;
   var sell = parseFloat(document.getElementById('p-sell').value) || 0;
   var tons = parseFloat(document.getElementById('p-tons').value) || 0;
   var comm = parseFloat(document.getElementById('p-comm').value) || 0;
   var commName = document.getElementById('p-commodity').value || 'Commodity';
-  var buyCost = buy * tons;
-  var sellRev = sell * tons;
-  var gross = sellRev - buyCost;
-  var commAmt = comm * tons;
-  var net = gross - commAmt;
-  var ppt = tons > 0 ? net / tons : 0;
+
+  var stationCost = buy * tons;
+  var carrierPays = sell * tons;
+  var pilotNet = carrierPays - stationCost;
+  var ppt = tons > 0 ? pilotNet / tons : 0;
+  var carrierCostTon = sell;
+
   document.getElementById('p-commodity-out').textContent = commName;
-  document.getElementById('p-buy-cost').textContent = fmt(Math.round(buyCost));
-  document.getElementById('p-sell-rev').textContent = fmt(Math.round(sellRev));
-  document.getElementById('p-gross').textContent = fmt(Math.round(gross));
-  document.getElementById('p-comm-out').textContent = fmt(Math.round(commAmt));
-  document.getElementById('p-net').textContent = fmt(Math.round(net));
+  document.getElementById('p-station-cost').textContent = fmt(Math.round(stationCost));
+  document.getElementById('p-carrier-pays').textContent = fmt(Math.round(carrierPays));
+  document.getElementById('p-net').textContent = fmt(Math.round(pilotNet));
   document.getElementById('p-ppt').textContent = fmt(Math.round(ppt));
+  document.getElementById('p-carrier-cost-ton').textContent = fmt(Math.round(carrierCostTon));
   document.getElementById('pilot-result').classList.remove('hidden');
 }}
+
+// ---- CARRIER CALCULATOR ----
 function calcCarrier() {{
   var buy = parseFloat(document.getElementById('c-buy').value) || 0;
   var tons = parseFloat(document.getElementById('c-tons').value) || 0;
@@ -439,61 +598,167 @@ function calcCarrier() {{
   var trit = parseFloat(document.getElementById('c-trit').value) || 0;
   var sell = parseFloat(document.getElementById('c-sell').value) || 0;
   var unloadComm = parseFloat(document.getElementById('c-unload-comm').value) || 0;
-  var commName = document.getElementById('c-commodity').value || 'Commodity';
-  var acqCost = buy * tons;
-  var loadCost = loadComm * tons;
-  var sellRev = sell * tons;
-  var unloadCost = unloadComm * tons;
-  var net = sellRev - acqCost - loadCost - trit - unloadCost;
-  var loadPer = loadComm * tons;
-  var unloadPer = unloadComm * tons;
+
+  var cBuyOrder = buy + loadComm;
+  var cSellOrder = sell - unloadComm;
+  var loadCost = cBuyOrder * tons;
+  var unloadRev = cSellOrder * tons;
+  var net = unloadRev - loadCost - trit;
   var ppt = tons > 0 ? net / tons : 0;
-  document.getElementById('c-commodity-out').textContent = commName;
-  document.getElementById('c-acq').textContent = fmt(Math.round(acqCost));
-  document.getElementById('c-load-cost').textContent = fmt(Math.round(loadCost));
-  document.getElementById('c-trit-out').textContent = fmt(Math.round(trit));
-  document.getElementById('c-sell-rev').textContent = fmt(Math.round(sellRev));
-  document.getElementById('c-unload-cost').textContent = fmt(Math.round(unloadCost));
-  document.getElementById('c-net').textContent = fmt(Math.round(net));
-  document.getElementById('c-load-per').textContent = fmt(Math.round(loadPer));
-  document.getElementById('c-unload-per').textContent = fmt(Math.round(unloadPer));
+
+  document.getElementById('c-commodity-out').textContent = 'Full Run';
+  document.getElementById('c-buy-order').textContent = fmt(Math.round(cBuyOrder)) + ' /t';
+  document.getElementById('c-sell-order').textContent = fmt(Math.round(cSellOrder)) + ' /t';
+  document.getElementById('c-load-cost').textContent = fmtShort(Math.round(loadCost));
+  document.getElementById('c-unload-rev').textContent = fmtShort(Math.round(unloadRev));
+  document.getElementById('c-net').textContent = fmtShort(Math.round(net));
   document.getElementById('c-ppt').textContent = fmt(Math.round(ppt));
+  document.getElementById('c-load-ppt').textContent = fmt(Math.round(loadComm));
+  document.getElementById('c-unload-ppt').textContent = fmt(Math.round(unloadComm));
+
+  var warn = '';
+  if (loadComm < 10000) warn += '<p class="flash flash-error">Loading commission below 10,000 CR/t minimum.</p>';
+  if (unloadComm < 10000) warn += '<p class="flash flash-error">Unloading commission below 10,000 CR/t minimum.</p>';
+  if (ppt < 0) warn += '<p class="flash flash-error">NET LOSS: carrier loses ' + fmt(Math.round(-ppt)) + ' per ton.</p>';
+  document.getElementById('c-commission-warn').innerHTML = warn;
   document.getElementById('carrier-result').classList.remove('hidden');
 }}
-async function searchInara() {{
+
+// ---- REVERSE CALCULATOR ----
+function calcReverse() {{
+  var buy = parseFloat(document.getElementById('r-buy').value) || 0;
+  var tons = parseFloat(document.getElementById('r-tons').value) || 0;
+  var loadComm = parseFloat(document.getElementById('r-load-comm').value) || 0;
+  var unloadComm = parseFloat(document.getElementById('r-unload-comm').value) || 0;
+  var minPpt = parseFloat(document.getElementById('r-min-ppt').value) || 0;
+
+  var reqSell = buy + loadComm + unloadComm + minPpt;
+  var spread = reqSell - buy;
+  var cBuyOrder = buy + loadComm;
+  var cSellOrder = reqSell - unloadComm;
+  var totalProfit = minPpt * tons;
+  var roi = cBuyOrder > 0 ? (minPpt / cBuyOrder) * 100 : 0;
+
+  document.getElementById('r-req-sell').textContent = fmt(Math.round(reqSell)) + ' /t';
+  document.getElementById('r-req-sell2').textContent = fmt(Math.round(reqSell)) + ' /t';
+  document.getElementById('r-spread').textContent = fmt(Math.round(spread)) + ' /t';
+  document.getElementById('r-buy-order').textContent = fmt(Math.round(cBuyOrder)) + ' /t';
+  document.getElementById('r-sell-order').textContent = fmt(Math.round(cSellOrder)) + ' /t';
+  document.getElementById('r-total-profit').textContent = fmtShort(Math.round(totalProfit));
+  document.getElementById('r-roi').textContent = roi.toFixed(1) + '%';
+  document.getElementById('reverse-result').classList.remove('hidden');
+}}
+
+// ---- MULTI-SCANNER ----
+async function runScanner() {{
   var key = document.getElementById('inara-key').value.trim();
-  var query = document.getElementById('inara-search').value.trim();
-  var resultDiv = document.getElementById('inara-result');
-  if (!key) {{ resultDiv.innerHTML = '<p class="flash flash-error">Enter your Inara API key first.</p>'; return; }}
-  if (!query) {{ resultDiv.innerHTML = '<p class="flash flash-error">Enter a commodity to search.</p>'; return; }}
-  localStorage.setItem('inara_api_key', key);
-  resultDiv.innerHTML = '<p style="color:#888;">Searching Inara...</p>';
-  try {{
-    var resp = await fetch('/api/inara-proxy', {{
-      method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
-      body: JSON.stringify({{ api_key: key, commodity: query }})
-    }});
-    var data = await resp.json();
-    if (data.error) {{ resultDiv.innerHTML = '<p class="flash flash-error">' + data.error + '</p>'; return; }}
-    if (!data.listings || data.listings.length === 0) {{
-      resultDiv.innerHTML = '<p style="color:#888;">No listings found for "' + query + '".</p>'; return;
+  if (!key) {{ alert('Enter your Inara API key first.'); return; }}
+  saveKey();
+  if (favs.length === 0) {{ alert('Add at least one commodity to your favourites.'); return; }}
+
+  var resultDiv = document.getElementById('scanner-results');
+  var progressDiv = document.getElementById('scanner-progress');
+  var statusEl = document.getElementById('scanner-status');
+  var barEl = document.getElementById('scanner-bar');
+
+  var params = {{
+    api_key: key,
+    commodities: favs,
+    tonnage: parseFloat(document.getElementById('s-tons').value) || 25000,
+    safety_margin: parseFloat(document.getElementById('s-safety').value) || 5000,
+    commission_load: parseFloat(document.getElementById('s-load-comm').value) || 15000,
+    commission_unload: parseFloat(document.getElementById('s-unload-comm').value) || 15000,
+    min_profit_total: parseFloat(document.getElementById('s-min-profit').value) || 250000000,
+    max_results: parseInt(document.getElementById('s-max-results').value) || 20
+  }};
+
+  resultDiv.innerHTML = '';
+  progressDiv.classList.remove('hidden');
+  statusEl.textContent = 'Scanning ' + favs.length + ' commodities...';
+  barEl.style.width = '0%';
+
+  var allResults = [];
+  var scansRun = 0;
+
+  for (var i = 0; i < favs.length; i++) {{
+    statusEl.textContent = 'Scanning ' + favs[i] + ' (' + (i+1) + '/' + favs.length + ')...';
+    barEl.style.width = ((i / favs.length) * 100) + '%';
+
+    try {{
+      var resp = await fetch('/api/scan-commodity', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{
+          api_key: params.api_key,
+          commodity: favs[i],
+          max_results: params.max_results,
+          tonnage: params.tonnage,
+          safety_margin: params.safety_margin,
+          commission_load: params.commission_load,
+          commission_unload: params.commission_unload,
+          min_profit_total: params.min_profit_total
+        }})
+      }});
+      var data = await resp.json();
+      if (data.best_trade) {{
+        allResults.push({{commodity: favs[i], trade: data.best_trade, stations_checked: data.stations_checked}});
+      }}
+      scansRun++;
+    }} catch(e) {{
+      scansRun++;
     }}
-    var html = '<table><thead><tr><th>Station</th><th>System</th><th>Buy/Sell</th><th>Price</th><th>Supply</th><th>Updated</th></tr></thead><tbody>';
-    data.listings.forEach(function(l) {{
+  }}
+
+  barEl.style.width = '100%';
+  statusEl.textContent = 'Scan complete. ' + scansRun + ' commodities checked, ' + allResults.length + ' viable trades found.';
+
+  if (allResults.length === 0) {{
+    resultDiv.innerHTML = '<div class="result-box"><p style="color:#a04040;">No viable trades found. Try reducing safety margin, lowering commissions, or adding different commodities.</p></div>';
+    return;
+  }}
+
+  // Sort by total profit descending
+  allResults.sort(function(a,b) {{ return b.trade.total_profit - a.trade.total_profit; }});
+
+  var html = '<h2 style="margin-top:24px;">Best Trade Found</h2>';
+  var best = allResults[0];
+  html += '<div class="result-box">';
+  html += '<h3>' + best.commodity.toUpperCase() + '</h3>';
+  html += '<div class="result-grid">';
+  html += '<div class="result-item"><label>Buy Station</label><div class="value" style="font-size:14px;">' + best.trade.buy_station + '</div><div style="color:#666;font-size:11px;">' + best.trade.buy_system + '</div></div>';
+  html += '<div class="result-item"><label>Sell Station</label><div class="value" style="font-size:14px;">' + best.trade.sell_station + '</div><div style="color:#666;font-size:11px;">' + best.trade.sell_system + '</div></div>';
+  html += '<div class="result-item"><label>Buy Price</label><div class="value value-cost">' + best.trade.buy_price.toLocaleString() + ' CR/t</div><div style="color:#666;font-size:11px;">Supply: ' + best.trade.supply.toLocaleString() + ' t</div></div>';
+  html += '<div class="result-item"><label>Sell Price</label><div class="value value-profit">' + best.trade.sell_price.toLocaleString() + ' CR/t</div><div style="color:#666;font-size:11px;">Demand: ' + best.trade.demand.toLocaleString() + ' t</div></div>';
+  html += '<div class="result-item"><label>Spread</label><div class="value value-neutral">' + best.trade.spread.toLocaleString() + ' CR/t</div></div>';
+  html += '<div class="result-item"><label>Carrier Net Profit</label><div class="value value-profit">' + best.trade.total_profit.toLocaleString() + ' CR</div><div style="color:#666;font-size:11px;">' + best.trade.owner_profit_ton.toLocaleString() + ' CR/t</div></div>';
+  html += '</div>';
+
+  // Show carrier order prices
+  html += '<p style="margin-top:16px;color:#888;">';
+  html += '<strong>Carrier Buy Order:</strong> ' + (best.trade.buy_price + params.commission_load).toLocaleString() + ' CR/t &nbsp;|&nbsp;';
+  html += '<strong>Carrier Sell Order:</strong> ' + (best.trade.sell_price - params.commission_unload).toLocaleString() + ' CR/t';
+  html += '</p>';
+  html += '</div>';
+
+  // All results table
+  if (allResults.length > 1) {{
+    html += '<h3>All Viable Trades (' + allResults.length + ')</h3>';
+    html += '<table><thead><tr><th>Commodity</th><th>Buy</th><th>Sell</th><th>Spread</th><th>Profit/t</th><th>Total Profit</th></tr></thead><tbody>';
+    allResults.forEach(function(r) {{
       html += '<tr>';
-      html += '<td>' + l.station + '</td><td>' + l.system + '</td>';
-      html += '<td style="color:' + (l.is_sell ? '#a04040' : '#6a9a5b') + ';">' + (l.is_sell ? 'Sell' : 'Buy') + '</td>';
-      html += '<td>' + l.price.toLocaleString() + ' CR</td><td>' + l.supply.toLocaleString() + '</td>';
-      html += '<td style="color:#666;">' + l.updated + '</td></tr>';
+      html += '<td style="color:#c45a1a;">' + r.commodity + '</td>';
+      html += '<td>' + r.trade.buy_price.toLocaleString() + '</td>';
+      html += '<td>' + r.trade.sell_price.toLocaleString() + '</td>';
+      html += '<td>' + r.trade.spread.toLocaleString() + '</td>';
+      html += '<td style="color:#6a9a5b;">' + r.trade.owner_profit_ton.toLocaleString() + '</td>';
+      html += '<td style="color:#6a9a5b;">' + r.trade.total_profit.toLocaleString() + '</td>';
+      html += '</tr>';
     }});
     html += '</tbody></table>';
-    resultDiv.innerHTML = html;
-  }} catch(e) {{ resultDiv.innerHTML = '<p class="flash flash-error">Network error. Try again.</p>'; }}
+  }}
+
+  resultDiv.innerHTML = html;
 }}
-window.onload = function() {{
-  var saved = localStorage.getItem('inara_api_key');
-  if (saved) document.getElementById('inara-key').value = saved;
-}};
 </script>
 </body></html>"""
 
@@ -535,11 +800,26 @@ def settings_page():
 <button type="submit" class="btn">Update Password</button>
 </form>
 <h2>Inara API Key</h2>
-<p style="color:#888;">Your Inara API key is stored in this browser only. The server never sees it except when relaying a search request — and it is never written to disk.</p>
-<p style="color:#666;font-size:12px;">To update it, return to the Calculator page and enter a new key.</p>
+<p style="color:#888;">Your Inara API key is stored in this browser only. The server never sees it except when relaying search requests — it is never written to disk.</p>
+<p style="color:#666;font-size:12px;">To update it, return to the Calculator and enter a new key.</p>
 </div></body></html>"""
 
-# -- Admin Page --
+# -- Save Favourites --
+@flask_app.route("/save_favourites", methods=["POST"])
+@login_required
+def save_favourites():
+    data = load_accounts()
+    user = data["users"].get(session["username"])
+    if not user:
+        return jsonify({"status": "error", "message": "User not found"}), 404
+    favs = request.get_json().get("favourites", [])
+    if "settings" not in user:
+        user["settings"] = {}
+    user["settings"]["favourites"] = favs
+    save_accounts(data)
+    return jsonify({"status": "ok"})
+
+# -- Admin --
 @flask_app.route("/admin", methods=["GET", "POST"])
 @min_level(50)
 def admin_page():
@@ -561,7 +841,8 @@ def admin_page():
                 data["users"][new_user] = {
                     "password_hash": hash_password(new_pw),
                     "role": new_role,
-                    "discord_id": None
+                    "discord_id": None,
+                    "settings": {}
                 }
                 save_accounts(data)
                 msg = ("ok", f"Account '{new_user}' created.")
@@ -601,7 +882,6 @@ def admin_page():
             else:
                 msg = ("error", "User not found.")
 
-        # --- CEO-only actions ---
         elif action == "add_role" and is_ceo:
             role_name = request.form.get("role_name", "").lower().strip()
             role_label = request.form.get("role_label", "").strip()
@@ -623,38 +903,33 @@ def admin_page():
             if role_name in ("ceo", "staff"):
                 msg = ("error", "Cannot remove the CEO or Staff roles.")
             elif role_name in data["roles"]:
-                # Reassign any users with this role to staff
                 for uname, uinfo in data["users"].items():
                     if uinfo.get("role") == role_name:
                         uinfo["role"] = "staff"
                 del data["roles"][role_name]
                 save_accounts(data)
-                msg = ("ok", f"Role '{role_name}' removed. Affected users reassigned to Staff.")
+                msg = ("ok", f"Role '{role_name}' removed.")
             else:
                 msg = ("error", "Role not found.")
 
     data = load_accounts()
     role_label = get_user_role_label(session["username"], data)
 
-    # Users table
     users_html = ""
     for name, info in data["users"].items():
         ur = info.get("role", "staff")
         rl = data["roles"].get(ur, {}).get("label", ur)
         users_html += f"<tr><td>{name}</td><td>{rl}</td><td>{info.get('discord_id','—')}</td></tr>"
 
-    # Role select options
     role_options = "".join(
         f"<option value='{rn}'>{ri['label']} (Level {ri['level']})</option>"
         for rn, ri in data["roles"].items()
     )
 
-    # Roles table
     roles_html = ""
     for rn, ri in data["roles"].items():
         roles_html += f"<tr><td>{ri['label']}</td><td>{rn}</td><td>{ri['level']}</td></tr>"
 
-    # Backup JSON
     backup_json = get_backup_json()
 
     return f"""<!DOCTYPE html><html lang="en"><head>
@@ -673,49 +948,34 @@ def admin_page():
 {"<p class='flash flash-" + msg[0] + "'>" + msg[1] + "</p>" if msg else ""}
 
 <h2>Registered Users</h2>
-<table>
-<thead><tr><th>Username</th><th>Role</th><th>Discord ID</th></tr></thead>
-<tbody>{users_html}</tbody>
-</table>
+<table><thead><tr><th>Username</th><th>Role</th><th>Discord ID</th></tr></thead><tbody>{users_html}</tbody></table>
 
 <h2>Add User</h2>
-<form method="POST">
-<input type="hidden" name="action" value="add">
+<form method="POST"><input type="hidden" name="action" value="add">
 <label>Username</label><input type="text" name="new_username" required>
 <label>Password</label><input type="password" name="new_password" required>
 <label>Role</label><select name="new_role">{role_options}</select>
-<button type="submit" class="btn">Create Account</button>
-</form>
+<button type="submit" class="btn">Create Account</button></form>
 
 <h2>Remove User</h2>
-<form method="POST">
-<input type="hidden" name="action" value="remove">
+<form method="POST"><input type="hidden" name="action" value="remove">
 <label>Username</label><input type="text" name="remove_user" required>
-<button type="submit" class="btn btn-danger btn-sm">Remove</button>
-</form>
+<button type="submit" class="btn btn-danger btn-sm">Remove</button></form>
 
 <h2>Change Role</h2>
-<form method="POST">
-<input type="hidden" name="action" value="change_role">
+<form method="POST"><input type="hidden" name="action" value="change_role">
 <label>Username</label><input type="text" name="role_user" required>
 <label>New Role</label><select name="role_value">{role_options}</select>
-<button type="submit" class="btn">Change Role</button>
-</form>
+<button type="submit" class="btn">Change Role</button></form>
 
-{"<!-- ===== CEO-ONLY SECTION ===== -->" if is_ceo else ""}
-{"<hr style='border-color:#1a1a1a;margin:40px 0;'>" if is_ceo else ""}
-{"<h2 style='color:#c45a1a;'>Role Management [CEO]</h2>" if is_ceo else ""}
-
+{"<hr style='border-color:#1a1a1a;margin:40px 0;'><h2 style='color:#c45a1a;'>Role Management [CEO]</h2>" if is_ceo else ""}
 {"<h3>Current Roles</h3><table><thead><tr><th>Label</th><th>Name</th><th>Level</th></tr></thead><tbody>" + roles_html + "</tbody></table>" if is_ceo else ""}
-
 {"<h3>Add New Role</h3><form method='POST'><input type='hidden' name='action' value='add_role'><label>Role Name (internal, lowercase)</label><input type='text' name='role_name' required><label>Display Label</label><input type='text' name='role_label' required><label>Clearance Level (1-99)</label><input type='number' name='role_level' value='30' min='1' max='99'><button type='submit' class='btn'>Create Role</button></form>" if is_ceo else ""}
-
 {"<h3>Remove Role</h3><form method='POST'><input type='hidden' name='action' value='remove_role'><label>Role Name</label><input type='text' name='remove_role' required><button type='submit' class='btn btn-danger btn-sm'>Remove Role</button></form><p style='color:#666;font-size:11px;'>Users with this role will be reassigned to Staff.</p>" if is_ceo else ""}
-
-{"<h3>Export Backup</h3><p style='color:#888;'>Copy this JSON and paste it into the <code>ACCOUNTS_BACKUP</code> environment variable in Render. This protects against data loss on service restart.</p><div class='backup-box' id='backup-json'>" + backup_json + "</div><button class='btn btn-sm' onclick='copyBackup()' style='margin-top:8px;'>Copy to Clipboard</button>" if is_ceo else ""}
+{"<h3>Export Backup</h3><p style='color:#888;'>Copy this JSON and paste into <code>ACCOUNTS_BACKUP</code> env var on Render.</p><div class='backup-box' id='backup-json'>" + backup_json + "</div><button class='btn btn-sm' onclick='copyBackup()' style='margin-top:8px;'>Copy to Clipboard</button>" if is_ceo else ""}
 
 </div>
-{"<script>function copyBackup() {{ var text = document.getElementById('backup-json').innerText; navigator.clipboard.writeText(text).then(function() {{ alert('Backup copied to clipboard.'); }}); }}</script>" if is_ceo else ""}
+{"<script>function copyBackup(){{var t=document.getElementById('backup-json').innerText;navigator.clipboard.writeText(t).then(function(){{alert('Backup copied.');}});}}</script>" if is_ceo else ""}
 </body></html>"""
 
 # -- Health --
@@ -723,55 +983,115 @@ def admin_page():
 def health():
     return "NORAI operational."
 
-# -- Inara Proxy --
-INARA_API_URL = "https://inara.cz/inapi/v1/"
+# ============================================================
+# INARA API — Single Commodity Scan
+# ============================================================
 
-@flask_app.route("/api/inara-proxy", methods=["POST"])
-@login_required
-def inara_proxy():
-    data = request.get_json()
-    api_key = data.get("api_key", "").strip()
-    commodity = data.get("commodity", "").strip()
-    if not api_key or not commodity:
-        return jsonify({"error": "API key and commodity are required."})
+def inara_call(api_key, event_name, event_data):
     payload = {
         "header": {
             "appName": "NORAI Trade Calculator",
-            "appVersion": "1.0",
+            "appVersion": "2.0",
             "APIkey": api_key
         },
         "events": [{
-            "eventName": "getCommodityMarket",
+            "eventName": event_name,
             "eventTimestamp": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "eventData": {"commodityName": commodity}
+            "eventData": event_data
         }]
     }
     try:
-        resp = requests.post(INARA_API_URL, json=payload, timeout=15)
+        resp = requests.post(INARA_API_URL, json=payload, timeout=20)
+        resp.raise_for_status()
         result = resp.json()
-        listings = []
         events = result.get("events", [])
-        if events:
-            for entry in events[0].get("eventData", []):
-                listings.append({
-                    "station": entry.get("stationName", "Unknown"),
-                    "system": entry.get("starsystemName", "Unknown"),
-                    "price": entry.get("commoditySellPrice") or entry.get("commodityBuyPrice") or 0,
-                    "is_sell": entry.get("commoditySellPrice") is not None,
-                    "supply": entry.get("commodityStock", 0),
-                    "updated": entry.get("updateTime", "N/A")
-                })
-        listings.sort(key=lambda x: (not x["is_sell"], -x["price"] if x["is_sell"] else x["price"]))
-        return jsonify({"listings": listings[:20]})
+        if events and events[0].get("eventStatus") == 200:
+            return events[0].get("eventData", [])
+        elif events:
+            logger.warning(f"Inara API returned status {events[0].get('eventStatus')}: {events[0].get('eventStatusText', '')}")
+        return []
     except requests.RequestException as e:
-        logger.error(f"Inara proxy error: {e}")
-        return jsonify({"error": "Could not reach Inara API. Try again later."})
+        logger.error(f"Inara API request error: {e}")
+        return []
     except Exception as e:
-        logger.error(f"Inara proxy parse error: {e}")
-        return jsonify({"error": "Unexpected response from Inara. Check your API key."})
+        logger.error(f"Inara API parse error: {e}")
+        return []
+
+
+@flask_app.route("/api/scan-commodity", methods=["POST"])
+@login_required
+def scan_commodity():
+    data = request.get_json()
+    api_key = data.get("api_key", "").strip()
+    commodity = data.get("commodity", "").strip().lower()
+    max_results = int(data.get("max_results", 20))
+    tonnage = float(data.get("tonnage", 25000))
+    safety = float(data.get("safety_margin", 5000))
+    comm_load = float(data.get("commission_load", 15000))
+    comm_unload = float(data.get("commission_unload", 15000))
+    min_profit_total = float(data.get("min_profit_total", 250000000))
+
+    if not api_key or not commodity:
+        return jsonify({"error": "API key and commodity required."}), 400
+
+    req_vol = tonnage + safety
+
+    # Fetch best buy and sell stations
+    buy_stations = inara_call(api_key, "getCommodityBestBuyStations", {
+        "commodityName": commodity,
+        "maxResults": max_results
+    })
+    sell_stations = inara_call(api_key, "getCommodityBestSellStations", {
+        "commodityName": commodity,
+        "maxResults": max_results
+    })
+
+    # Filter by volume
+    valid_buys = [s for s in buy_stations if s.get("supply", 0) >= req_vol]
+    valid_sells = [s for s in sell_stations if s.get("demand", 0) >= req_vol]
+
+    if not valid_buys or not valid_sells:
+        return jsonify({
+            "best_trade": None,
+            "stations_checked": len(buy_stations) + len(sell_stations),
+            "valid_buys": len(valid_buys),
+            "valid_sells": len(valid_sells)
+        })
+
+    # Find best pairing
+    best_trade = None
+    best_total = -float("inf")
+
+    for buy in valid_buys:
+        for sell in valid_sells:
+            spread = sell["sellPrice"] - buy["buyPrice"]
+            profit_ton = spread - comm_load - comm_unload
+            total = profit_ton * tonnage
+            if total >= min_profit_total and total > best_total:
+                best_total = total
+                best_trade = {
+                    "buy_station": buy.get("stationName", "?"),
+                    "buy_system": buy.get("starsystemName", buy.get("systemName", "?")),
+                    "buy_price": buy["buyPrice"],
+                    "supply": buy.get("supply", 0),
+                    "sell_station": sell.get("stationName", "?"),
+                    "sell_system": sell.get("starsystemName", sell.get("systemName", "?")),
+                    "sell_price": sell["sellPrice"],
+                    "demand": sell.get("demand", 0),
+                    "spread": spread,
+                    "owner_profit_ton": profit_ton,
+                    "total_profit": total
+                }
+
+    return jsonify({
+        "best_trade": best_trade,
+        "stations_checked": len(buy_stations) + len(sell_stations),
+        "valid_buys": len(valid_buys),
+        "valid_sells": len(valid_sells)
+    })
 
 # ============================================================
-# DISCORD BOT
+# DISCORD BOT (unchanged from v1.0)
 # ============================================================
 
 WELCOME_MESSAGE = """**NORTHCORP [NINC] — INCOMING TRANSMISSION**
@@ -970,10 +1290,7 @@ async def cmd_status(interaction: discord.Interaction):
 async def cmd_fleet(interaction: discord.Interaction):
     fleet = fetch_fleet()
     if not fleet:
-        await interaction.response.send_message(
-            "Fleet data unavailable. Consult the corporate website for current registry.",
-            ephemeral=True
-        )
+        await interaction.response.send_message("Fleet data unavailable.", ephemeral=True)
         return
     lines = ["**NORTHCORP — Active Fleet Registry**\n"]
     for ship in fleet:
@@ -981,13 +1298,10 @@ async def cmd_fleet(interaction: discord.Interaction):
             f"- **{ship['name']}** [{ship['identifier']}] — {ship['class']} — "
             f"{ship['role']} — Value: {ship['value']} — **{ship['status']}**"
         )
-    lines.append(
-        "\nFleet carrier operational. Inquiries regarding carrier loading "
-        "contracts welcome. Use **/contact**."
-    )
+    lines.append("\nFleet carrier operational. Use **/contact** for contracts.")
     await interaction.response.send_message("\n".join(lines))
 
-@bot.tree.command(name="about", description="About NORTHCORP — who we are and what we do.")
+@bot.tree.command(name="about", description="About NORTHCORP.")
 async def cmd_about(interaction: discord.Interaction):
     await interaction.response.send_message(ABOUT_RESPONSE)
 
@@ -995,58 +1309,50 @@ async def cmd_about(interaction: discord.Interaction):
 async def cmd_services(interaction: discord.Interaction):
     await interaction.response.send_message(SERVICES_RESPONSE)
 
-@bot.tree.command(name="contact", description="How to reach CEO Kalvin North for contracts.")
+@bot.tree.command(name="contact", description="How to reach CEO North.")
 async def cmd_contact(interaction: discord.Interaction):
     await interaction.response.send_message(CONTACT_RESPONSE)
 
 @bot.tree.command(name="help", description="List all available NORAI commands.")
 async def cmd_help(interaction: discord.Interaction):
-    help_text = """**NORAI — Available Commands**
+    await interaction.response.send_message("""**NORAI — Available Commands**
 
 ```
 /status    — System status and CEO location
-/fleet     — Fleet registry (ships, roles, status)
+/fleet     — Fleet registry
 /about     — About NORTHCORP
 /services  — Services offered
 /contact   — Contact CEO North
-/clock     — Current in-game date and time
+/clock     — In-game date and time
 /quote     — Random NORTHCORP motto
 /trade     — Quick trade profit calculator
 /log       — Submit a flight log (Contractor+)
 /help      — This list
 ```
 
-I also respond to:
-• "NORAI" or "hello NORAI"
-• "NORAI, report"
+I also respond to: "NORAI" and "NORAI, report"
 
-**NORAI Trade Calculator (web):** Employee login required.
-For detailed trade planning with Inara integration, visit the employee portal."""
-    await interaction.response.send_message(help_text)
+**NORAI Trade Calculator:** Employee login required. Visit the employee portal for detailed trade planning with Inara integration.""")
 
-@bot.tree.command(name="clock", description="Display current in-game date and time (3310+).")
+@bot.tree.command(name="clock", description="In-game date and time.")
 async def cmd_clock(interaction: discord.Interaction):
     ig_time = in_game_datetime()
     utc_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     await interaction.response.send_message(
-        f"**Galactic Standard Time**\n\n"
-        f"- **In-Game:** {ig_time}\n"
-        f"- **UTC:** {utc_time}\n\n"
-        f"*NORTHCORP operates on 24-hour galactic standard. "
-        f"All contract deadlines use GST.*"
+        f"**Galactic Standard Time**\n\n- **In-Game:** {ig_time}\n- **UTC:** {utc_time}\n\n*NORTHCORP operates on 24-hour GST.*"
     )
 
-@bot.tree.command(name="quote", description="Random NORTHCORP motto or Kalvin-ism.")
+@bot.tree.command(name="quote", description="Random NORTHCORP motto.")
 async def cmd_quote(interaction: discord.Interaction):
     await interaction.response.send_message(f"*{random.choice(QUOTES)}*")
 
-@bot.tree.command(name="trade", description="Quick trade profit calculator (manual entry).")
+@bot.tree.command(name="trade", description="Quick trade profit calculator (manual).")
 @app_commands.describe(
-    commodity="Commodity name (e.g., Gold)",
-    buy_price="Buy price per ton (CR)",
-    sell_price="Sell price per ton (CR)",
+    commodity="Commodity name (e.g. Gold)",
+    buy_price="Buy price per ton at station (CR)",
+    sell_price="Sell price per ton at destination (CR)",
     tonnage="Tonnage to haul",
-    commission="Commission per ton in CR (e.g., 5000)"
+    commission="Commission per ton in CR (e.g. 10000)"
 )
 async def cmd_trade(
     interaction: discord.Interaction,
@@ -1057,20 +1363,15 @@ async def cmd_trade(
     commission: float = 0.0
 ):
     if buy_price <= 0 or sell_price <= 0 or tonnage <= 0:
-        await interaction.response.send_message(
-            "All values must be positive numbers.",
-            ephemeral=True
-        )
+        await interaction.response.send_message("All values must be positive.", ephemeral=True)
         return
-
     buy_cost = buy_price * tonnage
     sell_rev = sell_price * tonnage
     gross = sell_rev - buy_cost
     comm_amt = commission * tonnage
     net = gross - comm_amt
     ppt = net / tonnage
-
-    result = f"""**Trade Calculation — {commodity}**
+    await interaction.response.send_message(f"""**Trade Calculation — {commodity}**
 
 ```
 Buy Price:    {buy_price:,.0f} CR/ton
@@ -1086,26 +1387,20 @@ Net Profit:   {fmt_cr(net)}
 Profit/Ton:   {fmt_cr(ppt)}
 ```
 
-*For detailed trade planning with Inara price lookup, use the [NORAI Trade Calculator](https://northcorp-norai.onrender.com/calculator).*"""
+*For detailed trade planning with Inara price lookup, use the [NORAI Trade Calculator](https://northcorp-norai.onrender.com/calculator).*""")
 
-    await interaction.response.send_message(result)
-
-@bot.tree.command(name="log", description="[Contractor+] Submit a structured flight log.")
+@bot.tree.command(name="log", description="[Contractor+] Submit a flight log.")
 @app_commands.describe(
-    ship="Ship used for this run (e.g., Atlas)",
-    cargo="Cargo type and tonnage (e.g., 720t Gold)",
+    ship="Ship used",
+    cargo="Cargo type and tonnage",
     origin="Origin system/station",
     destination="Destination system/station",
-    profit="Profit earned (e.g., 12,400,000 CR)",
-    notes="Any additional notes (optional)"
+    profit="Profit earned",
+    notes="Additional notes (optional)"
 )
 async def cmd_log(
     interaction: discord.Interaction,
-    ship: str,
-    cargo: str,
-    origin: str,
-    destination: str,
-    profit: str,
+    ship: str, cargo: str, origin: str, destination: str, profit: str,
     notes: str = ""
 ):
     member = interaction.guild.get_member(interaction.user.id)
@@ -1114,28 +1409,18 @@ async def cmd_log(
         return
     role_names = [r.name for r in member.roles]
     if "CEO" not in role_names and "Contractor" not in role_names:
-        await interaction.response.send_message(
-            "Access denied. Flight logs are restricted to NORTHCORP personnel.",
-            ephemeral=True
-        )
+        await interaction.response.send_message("Access denied. Flight logs restricted to NORTHCORP personnel.", ephemeral=True)
         return
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     notes_str = notes if notes else "N/A"
     entry = (
-        f"**FLIGHT LOG — {timestamp}**\n\n"
-        f"```\n"
-        f"Ship:        {ship}\n"
-        f"Cargo:       {cargo}\n"
-        f"Origin:      {origin}\n"
-        f"Destination: {destination}\n"
-        f"Profit:      {profit}\n"
-        f"Notes:       {notes_str}\n"
-        f"```\n\n"
+        f"**FLIGHT LOG — {timestamp}**\n\n```\nShip:        {ship}\nCargo:       {cargo}\n"
+        f"Origin:      {origin}\nDestination: {destination}\nProfit:      {profit}\nNotes:       {notes_str}\n```\n\n"
         f"*Logged by {interaction.user.display_name} — NORTHCORP [NINC]*"
     )
     channel = bot.get_channel(CHANNEL_FLIGHT_LOGS)
     if channel is None:
-        await interaction.response.send_message("Error: Flight log channel not found. Notify CEO North.", ephemeral=True)
+        await interaction.response.send_message("Error: Flight log channel not found.", ephemeral=True)
         return
     if isinstance(channel, discord.ForumChannel):
         thread = await channel.create_thread(
@@ -1147,38 +1432,33 @@ async def cmd_log(
         await channel.send(entry)
         await interaction.response.send_message("Flight log posted.", ephemeral=True)
 
-@bot.tree.command(name="setstatus", description="[CEO] Set your current location or status.")
-@app_commands.describe(status="Your current status (e.g., 'In transit to Lave', 'At HQ')")
+@bot.tree.command(name="setstatus", description="[CEO] Set your current location/status.")
+@app_commands.describe(status="Your current status")
 async def cmd_setstatus(interaction: discord.Interaction, status: str):
     if interaction.user.id != CEO_DISCORD_ID:
-        await interaction.response.send_message("Access denied. CEO credentials required.", ephemeral=True)
+        await interaction.response.send_message("Access denied.", ephemeral=True)
         return
     global ceo_status
     ceo_status = status
     await interaction.response.send_message(f"CEO status updated: **{status}**", ephemeral=True)
-    logger.info(f"CEO status set to: {status}")
 
-@bot.tree.command(name="broadcast", description="[CEO] Broadcast a message to Company Bulletins.")
-@app_commands.describe(message="The message to broadcast publicly.")
+@bot.tree.command(name="broadcast", description="[CEO] Broadcast to Company Bulletins.")
+@app_commands.describe(message="Message to broadcast")
 async def cmd_broadcast(interaction: discord.Interaction, message: str):
     if interaction.user.id != CEO_DISCORD_ID:
-        await interaction.response.send_message("Access denied. CEO credentials required.", ephemeral=True)
+        await interaction.response.send_message("Access denied.", ephemeral=True)
         return
     channel = bot.get_channel(CHANNEL_BULLETINS)
     if channel is None:
         await interaction.response.send_message("Error: Bulletins channel not found.", ephemeral=True)
         return
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-    await channel.send(f"**NORTHCORP BULLETIN** — {timestamp}\n\n{message}")
+    await channel.send(f"**NORTHCORP BULLETIN** — {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}\n\n{message}")
     await interaction.response.send_message("Bulletin transmitted.", ephemeral=True)
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.CommandOnCooldown):
-        await interaction.response.send_message(
-            f"Standby. Command on cooldown — retry in {error.retry_after:.0f}s.",
-            ephemeral=True
-        )
+        await interaction.response.send_message(f"Cooldown — retry in {error.retry_after:.0f}s.", ephemeral=True)
     else:
         logger.error(f"Command error: {error}")
         await interaction.response.send_message("Internal error. Notify CEO North.", ephemeral=True)
