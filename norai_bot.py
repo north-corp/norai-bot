@@ -572,11 +572,34 @@ async function runScanner() {{
     return;
   }}
 
-  statusEl.textContent = 'Scan complete. ' + data.total_trades + ' trades found across ' + data.commodities_scanned + ' commodities.';
+  var scannedOk = 0;
+  if (data.per_commodity) {{
+    scannedOk = data.per_commodity.filter(function(pc) {{ return pc.status === 'ok'; }}).length;
+  }}
+  statusEl.textContent = 'Scan complete. ' + data.total_trades + ' trades found. ' + scannedOk + '/' + (data.per_commodity ? data.per_commodity.length : favs.length) + ' commodities returned routes.';
   barEl.style.width = '100%';
 
   if (!data.trades || data.trades.length === 0) {{
-    resultDiv.innerHTML = '<div class="result-box"><p style="color:#a04040;">No viable trades found from ' + sys + ' / ' + stn + '.</p><p style="color:#666;margin-top:8px;">Try different commodities, a larger max distance, or a different reference station.</p></div>';
+    var html = '<div class="result-box"><p style="color:#a04040;">No viable trades found from ' + sys + ' / ' + stn + '.</p>';
+    html += '<p style="color:#666;margin-top:8px;">Try different commodities, a larger max distance, or a different reference station.</p>';
+
+    if (data.per_commodity) {{
+      html += '<h3 style="margin-top:16px;">Per-Commodity Results</h3>';
+      html += '<table><thead><tr><th>Commodity</th><th>Status</th><th>Routes</th><th>Passing</th><th>Error</th></tr></thead><tbody>';
+      data.per_commodity.forEach(function(pc) {{
+        html += '<tr>';
+        html += '<td style="color:#c45a1a;">' + pc.commodity + '</td>';
+        html += '<td style="color:' + (pc.status === 'ok' ? '#6a9a5b' : '#a04040') + ';">' + pc.status + '</td>';
+        html += '<td>' + pc.routes_found + '</td>';
+        html += '<td>' + pc.trades_passing_filters + '</td>';
+        html += '<td style="color:#888;font-size:11px;">' + (pc.error || '—') + '</td>';
+        html += '</tr>';
+      }});
+      html += '</tbody></table>';
+    }}
+
+    html += '</div>';
+    resultDiv.innerHTML = html;
     return;
   }}
 
@@ -809,7 +832,7 @@ def health():
     return "NORAI operational."
 
 # ============================================================
-# SPANSH ROUTE SCANNER
+# SPANSH ROUTE SCANNER — With per-commodity diagnostics
 # ============================================================
 
 @flask_app.route("/api/scan-commodity", methods=["POST"])
@@ -833,9 +856,16 @@ def scan_commodity():
 
     req_vol = tonnage + safety
     all_trades = []
-    scanned = 0
+    per_commodity = []
 
     for commodity in commodities:
+        commodity_result = {
+            "commodity": commodity,
+            "status": "pending",
+            "routes_found": 0,
+            "trades_passing_filters": 0,
+            "error": None
+        }
         try:
             params = {
                 "commodity": commodity,
@@ -844,19 +874,27 @@ def scan_commodity():
                 "max_distance": int(max_distance),
                 "limit": 10
             }
+            logger.info(f"Spansh request: {commodity} from {system}/{station}")
             resp = requests.get(SPANSH_ROUTE_URL, params=params, timeout=15)
             resp.raise_for_status()
             job_data = resp.json()
+
             if job_data.get("error"):
-                logger.warning(f"Spansh error for {commodity}: {job_data['error']}")
-                continue
-            job_id = job_data.get("job")
-            if not job_id:
+                commodity_result["status"] = "error"
+                commodity_result["error"] = job_data["error"]
+                per_commodity.append(commodity_result)
                 continue
 
-            # Poll for results (up to 24 seconds)
+            job_id = job_data.get("job")
+            if not job_id:
+                commodity_result["status"] = "error"
+                commodity_result["error"] = "No job ID returned"
+                per_commodity.append(commodity_result)
+                continue
+
+            # Poll for results (up to 30 seconds)
             result_data = None
-            for attempt in range(12):
+            for attempt in range(15):
                 time.sleep(2)
                 result_resp = requests.get(f"{SPANSH_RESULT_URL}/{job_id}", timeout=10)
                 result_resp.raise_for_status()
@@ -864,19 +902,26 @@ def scan_commodity():
                 state = result_data.get("state", result_data.get("status", ""))
                 if state in ("completed", "ok"):
                     break
-                elif state == "error":
-                    logger.warning(f"Spansh job {job_id} errored for {commodity}")
+                elif state in ("error", "failed"):
+                    logger.warning(f"Spansh job {job_id} state={state} for {commodity}")
                     result_data = None
                     break
             else:
                 logger.warning(f"Spansh job {job_id} timed out for {commodity}")
+                commodity_result["status"] = "timeout"
+                per_commodity.append(commodity_result)
                 continue
 
             if not result_data:
+                commodity_result["status"] = "error"
+                commodity_result["error"] = "Job failed or timed out"
+                per_commodity.append(commodity_result)
                 continue
-            scanned += 1
 
             routes = result_data.get("result", [])
+            commodity_result["status"] = "ok"
+            commodity_result["routes_found"] = len(routes)
+
             for route in routes:
                 source_info = route.get("source", {})
                 dest_info = route.get("destination", {})
@@ -888,16 +933,22 @@ def scan_commodity():
                     supply = sc.get("supply", 0)
                     demand = dc.get("demand", 0)
                     amount = comm.get("amount", 0)
+
+                    # Volume check
                     if supply < req_vol and amount < req_vol:
                         continue
                     if demand < req_vol:
                         continue
+
                     trade_volume = min(amount, tonnage)
                     spread = sell_price - buy_price
                     carrier_ppt = spread - comm_load - comm_unload
                     carrier_total = carrier_ppt * trade_volume
+
                     if carrier_total < min_profit_total:
                         continue
+
+                    commodity_result["trades_passing_filters"] += 1
                     all_trades.append({
                         "commodity": comm.get("name", commodity),
                         "source_system": source_info.get("system", "?"),
@@ -915,10 +966,17 @@ def scan_commodity():
                         "carrier_profit_per_ton": carrier_ppt,
                         "carrier_total_profit": carrier_total
                     })
+
         except requests.RequestException as e:
+            commodity_result["status"] = "error"
+            commodity_result["error"] = str(e)[:100]
             logger.error(f"Spansh request error for {commodity}: {e}")
         except Exception as e:
+            commodity_result["status"] = "error"
+            commodity_result["error"] = str(e)[:100]
             logger.error(f"Unexpected error scanning {commodity}: {e}")
+
+        per_commodity.append(commodity_result)
 
     seen = {}
     for t in all_trades:
@@ -926,10 +984,11 @@ def scan_commodity():
         if key not in seen or t["carrier_total_profit"] > seen[key]["carrier_total_profit"]:
             seen[key] = t
     unique_trades = sorted(seen.values(), key=lambda x: x["carrier_total_profit"], reverse=True)
+
     return jsonify({
         "trades": unique_trades[:30],
         "total_trades": len(unique_trades),
-        "commodities_scanned": scanned,
+        "per_commodity": per_commodity,
         "system": system,
         "station": station
     })
