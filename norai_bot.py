@@ -161,6 +161,8 @@ input.calc{color:#e0e0e0}
 .col{flex:1;min-width:180px}
 .inara-link{display:inline-block;margin-top:4px;color:#666;font-size:11px;text-decoration:none;border-bottom:1px dotted #444}
 .inara-link:hover{color:#c45a1a;border-color:#c45a1a}
+.btn{background:#c45a1a;color:#0a0a0a;font-weight:bold;font-size:14px;letter-spacing:2px;text-transform:uppercase;padding:14px 36px;border:none;cursor:pointer;font-family:'Courier New',monospace;margin-top:20px}
+.btn:hover{background:#d9702a}
 .result-box{background:#0f0f0f;border:1px solid #2a1a0c;padding:24px;margin-top:24px}
 .result-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
 .ri-label{color:#666;font-size:10px;text-transform:uppercase;letter-spacing:1px}
@@ -168,7 +170,6 @@ input.calc{color:#e0e0e0}
 .green{color:#6a9a5b!important}
 .red{color:#a04040!important}
 .amber{color:#c4a040!important}
-.comm-warn{margin-top:12px}
 .flash-error{border-color:#a04040;color:#c06060;background:#150808;padding:10px 14px;margin-top:8px;font-size:12px}
 .nav{display:flex;gap:24px;margin-bottom:30px;border-bottom:1px solid #1a1a1a;padding-bottom:12px}
 .nav a{color:#888;text-decoration:none;font-size:13px;letter-spacing:1px;text-transform:uppercase}
@@ -200,7 +201,7 @@ def login_page():
 <form method="POST">
 <label>Username</label><input type="text" name="username" required>
 <label>Password</label><input type="password" name="password" required>
-<button style="margin-top:16px;background:#c45a1a;color:#0a0a0a;font-weight:bold;font-size:13px;letter-spacing:2px;text-transform:uppercase;padding:12px 28px;border:none;cursor:pointer;font-family:'Courier New',monospace">Log In</button>
+<button class="btn">Log In</button>
 </form>
 <p style="color:#666;font-size:12px;margin-top:24px">No account? Contact CEO North.</p>
 </div></body></html>"""
@@ -228,57 +229,59 @@ def calculator_page():
 </div>
 
 <h1>Carrier Trade Calculator</h1>
-<p style="color:#888;margin-bottom:20px">Use Inara to find a commodity with a low buy price and high supply. Paste the best buy price here to see what sell price you need, or fill in what you know and the calculator fills the rest.</p>
+<p style="color:#888;margin-bottom:20px">Use Inara to find a commodity with a low buy price and high supply. Paste the best buy price here to see what sell price you need. Leave one field blank — it will be calculated when you click Calculate.</p>
 
 <h2>Commodity</h2>
 <div class="row">
   <div class="col">
     <label>Commodity Name</label>
-    <input type="text" id="commodity" class="calc" placeholder="e.g. Rhodplumsite" oninput="recalc()">
+    <input type="text" id="commodity" class="calc" placeholder="e.g. Rhodplumsite">
     <a id="inara-buy-link" class="inara-link" href="#" target="_blank">Search Inara for buy prices &rarr;</a>
   </div>
 </div>
 
 <h2>Inputs — Fill what you know</h2>
-<p style="color:#666;font-size:11px;margin-bottom:8px">Leave ONE field blank and it will be auto-calculated. Leave more than one blank and results will update as you type when enough is known.</p>
+<p style="color:#666;font-size:11px;margin-bottom:8px">Leave ONE field blank — it will be calculated. All others must be filled.</p>
 
 <div class="row">
   <div class="col">
     <label>Station Buy Price (CR/t)</label>
-    <input type="number" id="buy" class="calc" placeholder="Found on Inara" step="1" min="0" oninput="recalc()">
+    <input type="number" id="buy" class="calc" placeholder="Found on Inara" step="1" min="0">
   </div>
   <div class="col">
     <label>Loading Commission (CR/t)</label>
-    <input type="number" id="loadComm" class="calc" placeholder="Min 10,000" step="1" min="0" value="15000" oninput="recalc()">
+    <input type="number" id="loadComm" class="calc" placeholder="Min 10,000" step="1" min="0" value="15000">
   </div>
 </div>
 <div class="row">
   <div class="col">
     <label>Unloading Commission (CR/t)</label>
-    <input type="number" id="unloadComm" class="calc" placeholder="Min 10,000" step="1" min="0" value="15000" oninput="recalc()">
+    <input type="number" id="unloadComm" class="calc" placeholder="Min 10,000" step="1" min="0" value="15000">
   </div>
   <div class="col">
     <label>Tonnage</label>
-    <input type="number" id="tons" class="calc" placeholder="25000" step="1" min="0" value="25000" oninput="recalc()">
+    <input type="number" id="tons" class="calc" placeholder="25000" step="1" min="0" value="25000">
   </div>
 </div>
 <div class="row">
   <div class="col">
     <label>Desired Carrier Profit Per Ton (CR/t)</label>
-    <input type="number" id="profitTon" class="calc" placeholder="Leave blank to calculate" step="1" min="0" oninput="recalc()">
+    <input type="number" id="profitTon" class="calc" placeholder="e.g. 10000" step="1" min="0">
   </div>
   <div class="col">
     <label>Desired Carrier Total Profit (CR)</label>
-    <input type="number" id="profitTotal" class="calc" placeholder="e.g. 250,000,000" step="1" min="0" oninput="recalc()">
+    <input type="number" id="profitTotal" class="calc" placeholder="e.g. 250,000,000" step="1" min="0">
   </div>
 </div>
 <div class="row">
   <div class="col">
     <label>Station Sell Price (CR/t) — REQUIRED</label>
-    <input type="number" id="sell" class="result" placeholder="Calculated..." step="1" min="0" oninput="recalc()">
+    <input type="number" id="sell" class="result" placeholder="Will be calculated" step="1" min="0">
     <a id="inara-sell-link" class="inara-link" href="#" target="_blank">Search Inara for stations buying at this price &rarr;</a>
   </div>
 </div>
+
+<button class="btn" onclick="recalc()">Calculate</button>
 
 <div id="commission-warn"></div>
 
@@ -291,11 +294,8 @@ def calculator_page():
 
 <script>
 function fmtCR(n){{if(Math.abs(n)>=1e9)return(n/1e9).toFixed(2)+'B CR';if(Math.abs(n)>=1e6)return(n/1e6).toFixed(1)+'M CR';if(Math.abs(n)>=1e3)return(n/1e3).toFixed(0)+'K CR';return Math.round(n).toLocaleString('en-US')+' CR'}}
-
 function fmt(n){{return Math.round(n).toLocaleString('en-US')+' CR'}}
-
 function val(id){{var v=document.getElementById(id).value.trim();return v===''?null:parseFloat(v)}}
-
 function setVal(id,v){{document.getElementById(id).value=v!==null?Math.round(v):''}}
 
 function recalc(){{
@@ -311,25 +311,23 @@ function recalc(){{
   // Update Inara links
   var commEnc=encodeURIComponent(comm);
   document.getElementById('inara-buy-link').href='https://inara.cz/elite/commodities/?name='+commEnc;
-  if(sell!==null){{document.getElementById('inara-sell-link').href='https://inara.cz/elite/commodities/?name='+commEnc}}else{{document.getElementById('inara-sell-link').href='#'}}
 
-  // Count how many are empty
-  var blanks=[];
-  if(buy===null)blanks.push('buy');
-  if(lc===null)blanks.push('loadComm');
-  if(uc===null)blanks.push('unloadComm');
-  if(tons===null)blanks.push('tons');
-  if(ppt===null&&tpt===null)blanks.push('profit');
-  if(sell===null)blanks.push('sell');
-  // profitTon and profitTotal are two views of the same value
-  // If both are filled, they must agree (use ppt = tpt/tons)
-  // Determine profit per ton
+  // Determine profit per ton from whichever profit field is filled
   var profitPerTon=null;
   if(ppt!==null&&tons!==null){{profitPerTon=ppt;}}
   else if(tpt!==null&&tons!==null&&tons>0){{profitPerTon=tpt/tons;}}
   else if(ppt!==null){{profitPerTon=ppt;}}
 
-  // If we have exactly one blank, calculate it
+  // Count blanks
+  var blanks=[];
+  if(buy===null)blanks.push('buy');
+  if(lc===null)blanks.push('loadComm');
+  if(uc===null)blanks.push('unloadComm');
+  if(tons===null)blanks.push('tons');
+  if(profitPerTon===null)blanks.push('profit');
+  if(sell===null)blanks.push('sell');
+
+  // Auto-calculate if exactly one blank
   if(blanks.length===1){{
     var b=blanks[0];
     if(b==='sell'&&buy!==null&&lc!==null&&uc!==null&&profitPerTon!==null){{
@@ -345,34 +343,24 @@ function recalc(){{
     }}else if(b==='profit'&&buy!==null&&sell!==null&&lc!==null&&uc!==null){{
       profitPerTon=sell-buy-lc-uc;setVal('profitTon',profitPerTon);
     }}
-    // Re-read values after auto-fill
+    // Re-read after auto-fill
     buy=val('buy');lc=val('loadComm');uc=val('unloadComm');
     sell=val('sell');tons=val('tons');ppt=val('profitTon');tpt=val('profitTotal');
-    if(ppt===null&&tons!==null&&tons>0&&tpt!==null)ppt=tpt/tons;
-    if(ppt!==null&&tons!==null&&tpt===null)tpt=ppt*tons;
+    if(profitPerTon===null&&tons!==null&&tons>0&&tpt!==null)profitPerTon=tpt/tons;
+    if(profitPerTon!==null&&tons!==null&&tpt===null)tpt=profitPerTon*tons;
   }}
 
-  // Update profit total if we have ppt and tons
-  if(ppt!==null&&tons!==null&&tpt===null&&document.getElementById('profitTotal').value===''){{
-    setVal('profitTotal',ppt*tons);
-    tpt=ppt*tons;
-  }}
-  if(ppt===null&&tpt!==null&&tons!==null&&tons>0&&document.getElementById('profitTon').value===''){{
-    setVal('profitTon',tpt/tons);
-    ppt=tpt/tons;
-  }}
+  // Sync profit fields
+  if(profitPerTon!==null&&tons!==null&&tpt===null){{setVal('profitTotal',profitPerTon*tons);tpt=profitPerTon*tons;}}
+  if(profitPerTon===null&&tpt!==null&&tons!==null&&tons>0){{setVal('profitTon',tpt/tons);profitPerTon=tpt/tons;}}
 
   // Show results if we have enough data
-  if(buy===null||sell===null||lc===null||uc===null||tons===null){{
+  if(buy===null||sell===null||lc===null||uc===null||tons===null||profitPerTon===null){{
     document.getElementById('results').classList.add('hidden');
     document.getElementById('commission-warn').innerHTML='';
     document.getElementById('inara-sell-link').href='#';
     return;
   }}
-
-  profitPerTon=sell-buy-lc-uc;
-  if(ppt===null){{setVal('profitTon',profitPerTon);ppt=profitPerTon;}}
-  if(tpt===null){{setVal('profitTotal',profitPerTon*tons);tpt=profitPerTon*tons;}}
 
   var carrierBuyOrder=buy+lc;
   var carrierSellOrder=sell-uc;
@@ -403,9 +391,6 @@ function recalc(){{
   if(profitPerTon<0)warn+='<div class="flash-error">NET LOSS: carrier loses '+fmt(-profitPerTon)+' per ton.</div>';
   document.getElementById('commission-warn').innerHTML=warn;
 }}
-
-// Run once on load to fill in defaults
-window.onload=function(){{recalc();}};
 </script>
 </body></html>"""
 
@@ -433,7 +418,7 @@ def settings_page():
 <form method="POST"><h2>Change Password</h2>
 <label>Current Password</label><input type="password" name="current_password" required>
 <label>New Password</label><input type="password" name="new_password" required>
-<button style="margin-top:16px;background:#c45a1a;color:#0a0a0a;font-weight:bold;font-size:13px;letter-spacing:2px;text-transform:uppercase;padding:12px 28px;border:none;cursor:pointer;font-family:'Courier New',monospace">Update Password</button></form>
+<button class="btn">Update Password</button></form>
 </div></body></html>"""
 
 @flask_app.route("/admin", methods=["GET", "POST"])
@@ -522,7 +507,7 @@ def admin_page():
 <label>Username</label><input type="text" name="new_username" required>
 <label>Password</label><input type="password" name="new_password" required>
 <label>Role</label><select name="new_role" style="background:#0f0f0f;color:#e0e0e0;border:1px solid #1a1a1a;padding:8px;font-family:'Courier New';width:100%;max-width:300px">{role_options}</select>
-<button style="margin-top:12px;background:#c45a1a;color:#0a0a0a;font-weight:bold;font-size:13px;letter-spacing:2px;text-transform:uppercase;padding:10px 24px;border:none;cursor:pointer;font-family:'Courier New',monospace">Create Account</button></form>
+<button class="btn">Create Account</button></form>
 <h2>Remove User</h2>
 <form method="POST"><input type="hidden" name="action" value="remove">
 <label>Username</label><input type="text" name="remove_user" required>
@@ -531,10 +516,10 @@ def admin_page():
 <form method="POST"><input type="hidden" name="action" value="change_role">
 <label>Username</label><input type="text" name="role_user" required>
 <label>New Role</label><select name="role_value" style="background:#0f0f0f;color:#e0e0e0;border:1px solid #1a1a1a;padding:8px;font-family:'Courier New';width:100%;max-width:300px">{role_options}</select>
-<button style="margin-top:12px;background:#c45a1a;color:#0a0a0a;font-weight:bold;font-size:13px;letter-spacing:2px;text-transform:uppercase;padding:10px 24px;border:none;cursor:pointer;font-family:'Courier New',monospace">Change Role</button></form>
+<button class="btn">Change Role</button></form>
 {"<hr style='border-color:#1a1a1a;margin:30px 0'><h2 style='color:#c45a1a'>Role Management [CEO]</h2>" if is_ceo else ""}
 {"<h3>Current Roles</h3><table style='width:100%;border-collapse:collapse'><thead><tr><th style='text-align:left;padding:8px;border-bottom:1px solid #1a1a1a;color:#666'>Label</th><th style='text-align:left;padding:8px;border-bottom:1px solid #1a1a1a;color:#666'>Name</th><th style='text-align:left;padding:8px;border-bottom:1px solid #1a1a1a;color:#666'>Level</th></tr></thead><tbody>" + roles_html + "</tbody></table>" if is_ceo else ""}
-{"<h3>Add Role</h3><form method='POST'><input type='hidden' name='action' value='add_role'><label>Role Name (lowercase)</label><input type='text' name='role_name' required><label>Display Label</label><input type='text' name='role_label' required><label>Level (1-99)</label><input type='number' name='role_level' value='30' min='1' max='99'><button style='margin-top:12px;background:#c45a1a;color:#0a0a0a;font-weight:bold;font-size:13px;letter-spacing:2px;text-transform:uppercase;padding:10px 24px;border:none;cursor:pointer;font-family:\"Courier New\",monospace'>Create Role</button></form>" if is_ceo else ""}
+{"<h3>Add Role</h3><form method='POST'><input type='hidden' name='action' value='add_role'><label>Role Name (lowercase)</label><input type='text' name='role_name' required><label>Display Label</label><input type='text' name='role_label' required><label>Level (1-99)</label><input type='number' name='role_level' value='30' min='1' max='99'><button class='btn'>Create Role</button></form>" if is_ceo else ""}
 {"<h3>Remove Role</h3><form method='POST'><input type='hidden' name='action' value='remove_role'><label>Role Name</label><input type='text' name='remove_role' required><button style='margin-top:8px;background:#8b3030;color:#e0e0e0;font-weight:bold;font-size:11px;letter-spacing:1px;padding:8px 18px;border:none;cursor:pointer;font-family:\"Courier New\",monospace'>Remove Role</button></form><p style='color:#666;font-size:11px'>Users with this role become Staff.</p>" if is_ceo else ""}
 {"<h3>Export Backup</h3><p style='color:#888;font-size:12px'>Copy and paste into <code>ACCOUNTS_BACKUP</code> env var on Render.</p><div style='background:#0f0f0f;border:1px solid #2a2a0a;padding:12px;max-height:150px;overflow:auto;font-size:10px;color:#888;word-break:break-all;white-space:pre-wrap;margin-top:6px' id='backup-json'>" + backup_json + "</div><button style='margin-top:8px;background:#c45a1a;color:#0a0a0a;font-weight:bold;font-size:11px;letter-spacing:1px;padding:6px 14px;border:none;cursor:pointer;font-family:\"Courier New\",monospace' onclick='copyBackup()'>Copy</button>" if is_ceo else ""}
 </div>
@@ -641,12 +626,9 @@ def in_game_datetime():
     return ts.replace(str(now.year), str(ig_year), 1)
 
 def fmt_cr(n):
-    if n >= 1_000_000_000:
-        return f"{n/1_000_000_000:.2f}B CR"
-    elif n >= 1_000_000:
-        return f"{n/1_000_000:.1f}M CR"
-    elif n >= 1_000:
-        return f"{n/1_000:.0f}K CR"
+    if n >= 1_000_000_000: return f"{n/1_000_000_000:.2f}B CR"
+    elif n >= 1_000_000: return f"{n/1_000_000:.1f}M CR"
+    elif n >= 1_000: return f"{n/1_000:.0f}K CR"
     return f"{n:.0f} CR"
 
 class NORAIBot(commands.Bot):
@@ -752,7 +734,7 @@ async def cmd_help(interaction: discord.Interaction):
 
 I also respond to: "NORAI" and "NORAI, report"
 
-**NORAI Trade Calculator:** Employee login required for detailed carrier trade planning.""")
+**NORAI Trade Calculator:** Employee login required for carrier trade planning.""")
 
 @bot.tree.command(name="clock", description="In-game date and time.")
 async def cmd_clock(interaction: discord.Interaction):
