@@ -309,7 +309,7 @@ def logout_page():
     return redirect("/")
 
 # ============================================================
-# CALCULATOR — Full PTN Workflow
+# CALCULATOR — Full PTN Workflow + Scanner with Diagnostics
 # ============================================================
 
 @flask_app.route("/calculator")
@@ -344,7 +344,6 @@ def calculator_page():
   <div class="mode-tab" id="tab-reverse" onclick="switchMode('reverse')">Reverse</div>
 </div>
 
-<!-- ===== INARA KEY (shared across all modes) ===== -->
 <div style="background:#0f0f0f;border:1px solid #1a1a1a;padding:12px 16px;margin-bottom:20px;">
 <label style="margin-top:0;">Inara API Key</label>
 <div class="inline">
@@ -386,7 +385,6 @@ def calculator_page():
 <!-- ===== CARRIER FULL RUN MODE ===== -->
 <div id="mode-carrier" class="hidden">
 <p style="color:#888;margin-bottom:16px;">Full PTN carrier operation: buy at source, pay loading pilots, jump, sell at destination, pay unloading pilots. Both commissions must be ≥ 10,000 CR/t.</p>
-
 <h2>Leg 1 — Loading</h2>
 <div class="gap-row">
   <div><label>Station Buy Price (CR/t)</label><input type="number" id="c-buy" placeholder="45000" step="1" min="0"></div>
@@ -396,11 +394,9 @@ def calculator_page():
   <div><label>Loading Commission (CR/t)</label><input type="number" id="c-load-comm" placeholder="15000" step="1" min="10000"><span style="color:#666;font-size:11px;">Min 10,000 CR/t</span></div>
 </div>
 <p style="color:#666;font-size:11px;">Carrier buy order price = Station Buy Price + Loading Commission. Carrier pays this to loading pilots.</p>
-
 <h2>Transit</h2>
 <label>Tritium Fuel Cost (CR)</label><input type="number" id="c-trit" placeholder="0" step="1" min="0" value="0">
 <p style="color:#666;font-size:11px;">Optional — cost of fuel for the carrier jump.</p>
-
 <h2>Leg 2 — Unloading</h2>
 <div class="gap-row">
   <div><label>Station Sell Price (CR/t)</label><input type="number" id="c-sell" placeholder="85000" step="1" min="0"></div>
@@ -409,9 +405,7 @@ def calculator_page():
   <div><label>Unloading Commission (CR/t)</label><input type="number" id="c-unload-comm" placeholder="15000" step="1" min="10000"><span style="color:#666;font-size:11px;">Min 10,000 CR/t</span></div>
 </div>
 <p style="color:#666;font-size:11px;">Carrier sell order price = Station Sell Price - Unloading Commission. Unloading pilots pay this to the carrier.</p>
-
 <button class="btn" onclick="calcCarrier()">Calculate</button>
-
 <div class="result-box hidden" id="carrier-result">
 <h3>Full Run Results — <span id="c-commodity-out"></span></h3>
 <div class="result-grid">
@@ -468,7 +462,6 @@ def calculator_page():
 <!-- ===== REVERSE MODE ===== -->
 <div id="mode-reverse" class="hidden">
 <p style="color:#888;margin-bottom:16px;">Work backwards: given the station buy price and the commissions you want to offer, find the minimum station sell price you need to hunt for.</p>
-
 <h2>Your Parameters</h2>
 <div class="gap-row">
   <div><label>Station Buy Price (CR/t)</label><input type="number" id="r-buy" placeholder="45000" step="1" min="0"></div>
@@ -481,9 +474,7 @@ def calculator_page():
 <div class="gap-row">
   <div><label>Your Minimum Profit (CR/t)</label><input type="number" id="r-min-ppt" placeholder="10000" step="1" min="0"></div>
 </div>
-
 <button class="btn" onclick="calcReverse()">Calculate Required Sell Price</button>
-
 <div class="result-box hidden" id="reverse-result">
 <h3>What You Need</h3>
 <div class="result-grid">
@@ -501,7 +492,6 @@ def calculator_page():
 </div>
 
 <script>
-// ---- GLOBALS ----
 var favs = {saved_favs};
 var currentMode = 'pilot';
 
@@ -521,7 +511,6 @@ function fmtShort(n) {{
   return n.toLocaleString('en-US') + ' CR';
 }}
 
-// ---- API KEY ----
 function saveKey() {{
   if (document.getElementById('remember-key').checked) {{
     localStorage.setItem('inara_api_key', document.getElementById('inara-key').value);
@@ -529,6 +518,7 @@ function saveKey() {{
     localStorage.removeItem('inara_api_key');
   }}
 }}
+
 window.onload = function() {{
   var saved = localStorage.getItem('inara_api_key');
   if (saved) document.getElementById('inara-key').value = saved;
@@ -536,7 +526,6 @@ window.onload = function() {{
 }};
 document.getElementById('inara-key').addEventListener('input', saveKey);
 
-// ---- FAVOURITES ----
 function renderFavs() {{
   var html = '';
   favs.forEach(function(f, i) {{
@@ -567,20 +556,17 @@ async function saveFavs() {{
   }} catch(e) {{ alert('Network error.'); }}
 }}
 
-// ---- PILOT CALCULATOR ----
 function calcPilot() {{
   var buy = parseFloat(document.getElementById('p-buy').value) || 0;
   var sell = parseFloat(document.getElementById('p-sell').value) || 0;
   var tons = parseFloat(document.getElementById('p-tons').value) || 0;
   var comm = parseFloat(document.getElementById('p-comm').value) || 0;
   var commName = document.getElementById('p-commodity').value || 'Commodity';
-
   var stationCost = buy * tons;
   var carrierPays = sell * tons;
   var pilotNet = carrierPays - stationCost;
   var ppt = tons > 0 ? pilotNet / tons : 0;
   var carrierCostTon = sell;
-
   document.getElementById('p-commodity-out').textContent = commName;
   document.getElementById('p-station-cost').textContent = fmt(Math.round(stationCost));
   document.getElementById('p-carrier-pays').textContent = fmt(Math.round(carrierPays));
@@ -590,7 +576,6 @@ function calcPilot() {{
   document.getElementById('pilot-result').classList.remove('hidden');
 }}
 
-// ---- CARRIER CALCULATOR ----
 function calcCarrier() {{
   var buy = parseFloat(document.getElementById('c-buy').value) || 0;
   var tons = parseFloat(document.getElementById('c-tons').value) || 0;
@@ -598,14 +583,12 @@ function calcCarrier() {{
   var trit = parseFloat(document.getElementById('c-trit').value) || 0;
   var sell = parseFloat(document.getElementById('c-sell').value) || 0;
   var unloadComm = parseFloat(document.getElementById('c-unload-comm').value) || 0;
-
   var cBuyOrder = buy + loadComm;
   var cSellOrder = sell - unloadComm;
   var loadCost = cBuyOrder * tons;
   var unloadRev = cSellOrder * tons;
   var net = unloadRev - loadCost - trit;
   var ppt = tons > 0 ? net / tons : 0;
-
   document.getElementById('c-commodity-out').textContent = 'Full Run';
   document.getElementById('c-buy-order').textContent = fmt(Math.round(cBuyOrder)) + ' /t';
   document.getElementById('c-sell-order').textContent = fmt(Math.round(cSellOrder)) + ' /t';
@@ -615,7 +598,6 @@ function calcCarrier() {{
   document.getElementById('c-ppt').textContent = fmt(Math.round(ppt));
   document.getElementById('c-load-ppt').textContent = fmt(Math.round(loadComm));
   document.getElementById('c-unload-ppt').textContent = fmt(Math.round(unloadComm));
-
   var warn = '';
   if (loadComm < 10000) warn += '<p class="flash flash-error">Loading commission below 10,000 CR/t minimum.</p>';
   if (unloadComm < 10000) warn += '<p class="flash flash-error">Unloading commission below 10,000 CR/t minimum.</p>';
@@ -624,21 +606,18 @@ function calcCarrier() {{
   document.getElementById('carrier-result').classList.remove('hidden');
 }}
 
-// ---- REVERSE CALCULATOR ----
 function calcReverse() {{
   var buy = parseFloat(document.getElementById('r-buy').value) || 0;
   var tons = parseFloat(document.getElementById('r-tons').value) || 0;
   var loadComm = parseFloat(document.getElementById('r-load-comm').value) || 0;
   var unloadComm = parseFloat(document.getElementById('r-unload-comm').value) || 0;
   var minPpt = parseFloat(document.getElementById('r-min-ppt').value) || 0;
-
   var reqSell = buy + loadComm + unloadComm + minPpt;
   var spread = reqSell - buy;
   var cBuyOrder = buy + loadComm;
   var cSellOrder = reqSell - unloadComm;
   var totalProfit = minPpt * tons;
   var roi = cBuyOrder > 0 ? (minPpt / cBuyOrder) * 100 : 0;
-
   document.getElementById('r-req-sell').textContent = fmt(Math.round(reqSell)) + ' /t';
   document.getElementById('r-req-sell2').textContent = fmt(Math.round(reqSell)) + ' /t';
   document.getElementById('r-spread').textContent = fmt(Math.round(spread)) + ' /t';
@@ -649,7 +628,7 @@ function calcReverse() {{
   document.getElementById('reverse-result').classList.remove('hidden');
 }}
 
-// ---- MULTI-SCANNER ----
+// ---- MULTI-SCANNER with Diagnostics ----
 async function runScanner() {{
   var key = document.getElementById('inara-key').value.trim();
   if (!key) {{ alert('Enter your Inara API key first.'); return; }}
@@ -678,6 +657,7 @@ async function runScanner() {{
   barEl.style.width = '0%';
 
   var allResults = [];
+  var scanDiags = [];
   var scansRun = 0;
 
   for (var i = 0; i < favs.length; i++) {{
@@ -700,6 +680,9 @@ async function runScanner() {{
         }})
       }});
       var data = await resp.json();
+      if (data.diagnostic) {{
+        scanDiags.push(data.diagnostic);
+      }}
       if (data.best_trade) {{
         allResults.push({{commodity: favs[i], trade: data.best_trade, stations_checked: data.stations_checked}});
       }}
@@ -712,12 +695,48 @@ async function runScanner() {{
   barEl.style.width = '100%';
   statusEl.textContent = 'Scan complete. ' + scansRun + ' commodities checked, ' + allResults.length + ' viable trades found.';
 
+  // --- NO TRADES FOUND: show diagnostics ---
   if (allResults.length === 0) {{
-    resultDiv.innerHTML = '<div class="result-box"><p style="color:#a04040;">No viable trades found. Try reducing safety margin, lowering commissions, or adding different commodities.</p></div>';
+    var html = '<div class="result-box"><p style="color:#a04040;">No viable trades found.</p>';
+
+    html += '<h3 style="margin-top:16px;">Per-Commodity Diagnostics</h3>';
+    html += '<table><thead><tr><th>Commodity</th><th>Buy Stns</th><th>Sell Stns</th><th>Valid Buys</th><th>Valid Sells</th><th>Best Supply</th><th>Best Demand</th><th>Requires</th></tr></thead><tbody>';
+
+    for (var j = 0; j < scanDiags.length; j++) {{
+      var d = scanDiags[j];
+      html += '<tr>';
+      html += '<td style="color:#c45a1a;">' + d.commodity + '</td>';
+      html += '<td>' + d.buy_stations_total + '</td>';
+      html += '<td>' + d.sell_stations_total + '</td>';
+      html += '<td style="color:' + (d.valid_buys > 0 ? '#6a9a5b' : '#a04040') + ';">' + d.valid_buys + '</td>';
+      html += '<td style="color:' + (d.valid_sells > 0 ? '#6a9a5b' : '#a04040') + ';">' + d.valid_sells + '</td>';
+      html += '<td>' + (d.best_supply_found || 0).toLocaleString() + ' t</td>';
+      html += '<td>' + (d.best_demand_found || 0).toLocaleString() + ' t</td>';
+      html += '<td style="color:#666;">' + d.req_vol.toLocaleString() + ' t</td>';
+      html += '</tr>';
+    }}
+    html += '</tbody></table>';
+
+    // Sample raw API data
+    if (scanDiags.length > 0) {{
+      var sample = scanDiags[0];
+      html += '<h3 style="margin-top:16px;">Sample API Data (' + sample.commodity + ')</h3>';
+      if (sample.sample_buy) {{
+        html += '<p style="color:#888;font-size:12px;">First buy station: ' + sample.sample_buy.station + ' (' + sample.sample_buy.system + ') | Price: ' + (sample.sample_buy.price || 0).toLocaleString() + ' CR/t | Supply: ' + (sample.sample_buy.supply || 0).toLocaleString() + ' t</p>';
+        html += '<p style="color:#666;font-size:11px;">Raw API keys on buy data: ' + sample.sample_buy.all_keys.join(', ') + '</p>';
+      }}
+      if (sample.sample_sell) {{
+        html += '<p style="color:#888;font-size:12px;">First sell station: ' + sample.sample_sell.station + ' (' + sample.sample_sell.system + ') | Price: ' + (sample.sample_sell.price || 0).toLocaleString() + ' CR/t | Demand: ' + (sample.sample_sell.demand || 0).toLocaleString() + ' t</p>';
+        html += '<p style="color:#666;font-size:11px;">Raw API keys on sell data: ' + sample.sample_sell.all_keys.join(', ') + '</p>';
+      }}
+    }}
+
+    html += '</div>';
+    resultDiv.innerHTML = html;
     return;
   }}
 
-  // Sort by total profit descending
+  // --- TRADES FOUND: show results ---
   allResults.sort(function(a,b) {{ return b.trade.total_profit - a.trade.total_profit; }});
 
   var html = '<h2 style="margin-top:24px;">Best Trade Found</h2>';
@@ -732,15 +751,11 @@ async function runScanner() {{
   html += '<div class="result-item"><label>Spread</label><div class="value value-neutral">' + best.trade.spread.toLocaleString() + ' CR/t</div></div>';
   html += '<div class="result-item"><label>Carrier Net Profit</label><div class="value value-profit">' + best.trade.total_profit.toLocaleString() + ' CR</div><div style="color:#666;font-size:11px;">' + best.trade.owner_profit_ton.toLocaleString() + ' CR/t</div></div>';
   html += '</div>';
-
-  // Show carrier order prices
   html += '<p style="margin-top:16px;color:#888;">';
   html += '<strong>Carrier Buy Order:</strong> ' + (best.trade.buy_price + params.commission_load).toLocaleString() + ' CR/t &nbsp;|&nbsp;';
   html += '<strong>Carrier Sell Order:</strong> ' + (best.trade.sell_price - params.commission_unload).toLocaleString() + ' CR/t';
-  html += '</p>';
-  html += '</div>';
+  html += '</p></div>';
 
-  // All results table
   if (allResults.length > 1) {{
     html += '<h3>All Viable Trades (' + allResults.length + ')</h3>';
     html += '<table><thead><tr><th>Commodity</th><th>Buy</th><th>Sell</th><th>Spread</th><th>Profit/t</th><th>Total Profit</th></tr></thead><tbody>';
@@ -984,14 +999,14 @@ def health():
     return "NORAI operational."
 
 # ============================================================
-# INARA API — Single Commodity Scan
+# INARA API — Single Commodity Scan with Diagnostics
 # ============================================================
 
 def inara_call(api_key, event_name, event_data):
     payload = {
         "header": {
             "appName": "NORAI Trade Calculator",
-            "appVersion": "2.0",
+            "appVersion": "2.1",
             "APIkey": api_key
         },
         "events": [{
@@ -1037,19 +1052,15 @@ def scan_commodity():
     req_vol = tonnage + safety
     min_ppt = min_profit_total / tonnage
 
-    # Fetch buy stations
     buy_stations = inara_call(api_key, "getCommodityBestBuyStations", {
         "commodityName": commodity,
         "maxResults": max_results
     })
-
-    # Fetch sell stations
     sell_stations = inara_call(api_key, "getCommodityBestSellStations", {
         "commodityName": commodity,
         "maxResults": max_results
     })
 
-    # Build diagnostic info
     diag = {
         "commodity": commodity,
         "buy_stations_total": len(buy_stations),
@@ -1063,7 +1074,6 @@ def scan_commodity():
         "min_profit_total": min_profit_total,
     }
 
-    # Sample the first buy station to see what data we're getting
     if buy_stations:
         diag["sample_buy"] = {
             "station": buy_stations[0].get("stationName", "?"),
@@ -1081,20 +1091,16 @@ def scan_commodity():
             "all_keys": list(sell_stations[0].keys())
         }
 
-    # Filter by volume
     valid_buys = [s for s in buy_stations if s.get("supply", 0) >= req_vol]
     valid_sells = [s for s in sell_stations if s.get("demand", 0) >= req_vol]
 
     diag["valid_buys"] = len(valid_buys)
     diag["valid_sells"] = len(valid_sells)
 
-    # Show best volume info
     if buy_stations:
-        best_supply = max(s.get("supply", 0) for s in buy_stations)
-        diag["best_supply_found"] = best_supply
+        diag["best_supply_found"] = max(s.get("supply", 0) for s in buy_stations)
     if sell_stations:
-        best_demand = max(s.get("demand", 0) for s in sell_stations)
-        diag["best_demand_found"] = best_demand
+        diag["best_demand_found"] = max(s.get("demand", 0) for s in sell_stations)
 
     if not valid_buys or not valid_sells:
         return jsonify({
@@ -1103,7 +1109,6 @@ def scan_commodity():
             "message": f"No stations with sufficient volume (need {req_vol:,.0f}t supply AND demand). Best supply: {diag.get('best_supply_found', 0):,}t, Best demand: {diag.get('best_demand_found', 0):,}t"
         })
 
-    # Find best pairing
     best_trade = None
     best_total = -float("inf")
 
@@ -1135,7 +1140,7 @@ def scan_commodity():
     })
 
 # ============================================================
-# DISCORD BOT (unchanged from v1.0)
+# DISCORD BOT
 # ============================================================
 
 WELCOME_MESSAGE = """**NORTHCORP [NINC] — INCOMING TRANSMISSION**
