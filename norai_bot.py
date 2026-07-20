@@ -1006,7 +1006,7 @@ def inara_call(api_key, event_name, event_data):
     payload = {
         "header": {
             "appName": "NORAI Trade Calculator",
-            "appVersion": "2.1",
+            "appVersion": "2.2",
             "APIkey": api_key
         },
         "events": [{
@@ -1016,14 +1016,21 @@ def inara_call(api_key, event_name, event_data):
         }]
     }
     try:
+        logger.info(f"Inara call: {event_name} for {event_data.get('commodityName', '?')}")
         resp = requests.post(INARA_API_URL, json=payload, timeout=20)
-        resp.raise_for_status()
+        logger.info(f"Inara response status: {resp.status_code}")
         result = resp.json()
+        logger.info(f"Inara full response: {json.dumps(result)[:500]}")
         events = result.get("events", [])
-        if events and events[0].get("eventStatus") == 200:
-            return events[0].get("eventData", [])
-        elif events:
-            logger.warning(f"Inara API returned status {events[0].get('eventStatus')}: {events[0].get('eventStatusText', '')}")
+        if events:
+            status = events[0].get("eventStatus")
+            status_text = events[0].get("eventStatusText", "")
+            event_data_result = events[0].get("eventData", [])
+            logger.info(f"Inara event status: {status} - {status_text}, data count: {len(event_data_result) if isinstance(event_data_result, list) else 'N/A'}")
+            if status == 200:
+                return event_data_result
+            else:
+                logger.warning(f"Inara API non-200: {status} {status_text}")
         return []
     except requests.RequestException as e:
         logger.error(f"Inara API request error: {e}")
