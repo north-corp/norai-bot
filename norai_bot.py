@@ -5,7 +5,8 @@ import hashlib
 import secrets
 import logging
 import threading
-from datetime import datetime
+import time
+from datetime import datetime, timezone
 from functools import wraps
 
 import discord
@@ -32,7 +33,8 @@ GUILD_ID            = 1527555743413440533
 
 FLEET_JSON_URL = "https://north-corp.github.io/northcorp/fleet.json"
 ACCOUNTS_FILE  = "accounts.json"
-INARA_API_URL  = "https://inara.cz/inapi/v1/"
+SPANSH_ROUTE_URL = "https://spansh.co.uk/api/trade/route"
+SPANSH_RESULT_URL = "https://spansh.co.uk/api/results"
 
 ceo_status = "At HQ, Czerny Landing"
 
@@ -112,7 +114,6 @@ def ensure_defaults():
     for name, info in DEFAULT_ROLES.items():
         if name not in data["roles"]:
             data["roles"][name] = info
-
     if "k.north" not in data["users"]:
         data["users"]["k.north"] = {
             "password_hash": hash_password("tethlon"),
@@ -122,9 +123,7 @@ def ensure_defaults():
         logger.info("Created default CEO account (username: k.north). CHANGE THE PASSWORD.")
     else:
         data["users"]["k.north"]["role"] = "ceo"
-
     save_accounts(data)
-
     if ACCOUNTS_BACKUP:
         try:
             backup = json.loads(ACCOUNTS_BACKUP)
@@ -139,7 +138,6 @@ def ensure_defaults():
                 save_accounts(data)
         except Exception as e:
             logger.error(f"Backup restore failed: {e}")
-
     return data
 
 def get_backup_json():
@@ -174,47 +172,26 @@ def min_level(level):
         return decorated
     return decorator
 
-# -- Shared Styles --
 BASE_STYLE = """
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    background: #0a0a0a; color: #c0c0c0;
-    font-family: "Courier New", Courier, monospace;
-    line-height: 1.6; font-size: 15px;
-  }
+  body { background: #0a0a0a; color: #c0c0c0; font-family: "Courier New", Courier, monospace; line-height: 1.6; font-size: 15px; }
   .container { max-width: 960px; margin: 0 auto; padding: 40px 24px; }
   h1 { color: #c45a1a; font-size: 28px; letter-spacing: 4px; margin-bottom: 20px; }
   h2 { color: #c45a1a; font-size: 18px; letter-spacing: 2px; margin: 30px 0 16px; }
   h3 { color: #e0e0e0; font-size: 15px; margin-bottom: 10px; }
   label { display: block; color: #888; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; margin: 12px 0 4px; }
-  input, select, textarea {
-    background: #0f0f0f; color: #e0e0e0; border: 1px solid #1a1a1a;
-    padding: 10px 14px; font-family: "Courier New", monospace; font-size: 14px; width: 100%; max-width: 500px;
-  }
+  input, select, textarea { background: #0f0f0f; color: #e0e0e0; border: 1px solid #1a1a1a; padding: 10px 14px; font-family: "Courier New", monospace; font-size: 14px; width: 100%; max-width: 500px; }
   input:focus, select:focus, textarea:focus { border-color: #c45a1a; outline: none; }
-  .btn {
-    display: inline-block; background: #c45a1a; color: #0a0a0a;
-    font-weight: bold; font-size: 13px; letter-spacing: 2px; text-transform: uppercase;
-    text-decoration: none; padding: 12px 28px; border: none; cursor: pointer;
-    font-family: "Courier New", monospace; margin-top: 16px;
-  }
+  .btn { display: inline-block; background: #c45a1a; color: #0a0a0a; font-weight: bold; font-size: 13px; letter-spacing: 2px; text-transform: uppercase; text-decoration: none; padding: 12px 28px; border: none; cursor: pointer; font-family: "Courier New", monospace; margin-top: 16px; }
   .btn:hover { background: #d9702a; }
-  .btn-ghost {
-    background: transparent; color: #c45a1a; border: 2px solid #c45a1a;
-    font-family: "Courier New", monospace; font-weight: bold; font-size: 13px;
-    letter-spacing: 2px; text-transform: uppercase; padding: 12px 28px; cursor: pointer;
-  }
+  .btn-ghost { background: transparent; color: #c45a1a; border: 2px solid #c45a1a; font-family: "Courier New", monospace; font-weight: bold; font-size: 13px; letter-spacing: 2px; text-transform: uppercase; padding: 12px 28px; cursor: pointer; }
   .btn-ghost:hover { background: #1a1008; }
   .btn-sm { font-size: 11px; padding: 6px 14px; letter-spacing: 1px; }
   .btn-danger { background: #8b3030; color: #e0e0e0; border: none; }
   .btn-danger:hover { background: #a04040; }
-  .result-box {
-    background: #0f0f0f; border: 1px solid #1a1a1a; padding: 24px; margin-top: 20px;
-  }
-  .result-grid {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;
-  }
+  .result-box { background: #0f0f0f; border: 1px solid #1a1a1a; padding: 24px; margin-top: 20px; }
+  .result-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
   .result-item label { color: #666; font-size: 10px; }
   .result-item .value { color: #e0e0e0; font-size: 18px; font-weight: bold; }
   .value-profit { color: #6a9a5b !important; }
@@ -223,18 +200,13 @@ BASE_STYLE = """
   .flash { padding: 12px 16px; margin-bottom: 16px; border: 1px solid; }
   .flash-error { border-color: #a04040; color: #c06060; background: #150808; }
   .flash-ok { border-color: #5c8a5c; color: #6a9a5b; background: #081008; }
-  .flash-info { border-color: #c45a1a; color: #c45a1a; background: #100a04; }
   .nav { display: flex; gap: 24px; margin-bottom: 30px; border-bottom: 1px solid #1a1a1a; padding-bottom: 12px; }
   .nav a { color: #888; text-decoration: none; font-size: 13px; letter-spacing: 1px; text-transform: uppercase; }
   .nav a:hover, .nav a.active { color: #c45a1a; }
   .nav .logout { margin-left: auto; color: #666; }
   .user-bar { color: #666; font-size: 12px; margin-bottom: 8px; }
   .mode-tabs { display: flex; gap: 0; margin-bottom: 20px; flex-wrap: wrap; }
-  .mode-tab {
-    background: #0f0f0f; color: #888; border: 1px solid #1a1a1a;
-    padding: 10px 20px; cursor: pointer; font-family: "Courier New", monospace;
-    font-size: 13px; letter-spacing: 1px; text-transform: uppercase;
-  }
+  .mode-tab { background: #0f0f0f; color: #888; border: 1px solid #1a1a1a; padding: 10px 20px; cursor: pointer; font-family: "Courier New", monospace; font-size: 13px; letter-spacing: 1px; text-transform: uppercase; }
   .mode-tab.active { background: #1a1008; color: #c45a1a; border-color: #c45a1a; }
   .inline { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
   .gap-row { display: flex; gap: 12px; flex-wrap: wrap; }
@@ -243,32 +215,13 @@ BASE_STYLE = """
   th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #1a1a1a; font-size: 13px; }
   th { color: #666; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; }
   .hidden { display: none; }
-  .backup-box {
-    background: #0f0f0f; border: 1px solid #2a2a0a; padding: 16px;
-    max-height: 200px; overflow-y: auto; font-size: 11px; color: #888;
-    word-break: break-all; white-space: pre-wrap; margin-top: 8px;
-  }
-  .progress-bar {
-    width: 100%; height: 4px; background: #1a1a1a; margin-top: 12px;
-  }
-  .progress-fill {
-    height: 100%; background: #c45a1a; transition: width 0.3s;
-  }
-  .scanner-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 4px 0; }
-  .scanner-row span { color: #888; font-size: 13px; }
-  .scanner-row .good { color: #6a9a5b; }
-  .scanner-row .bad { color: #a04040; }
-  .tag {
-    display: inline-block; background: #1a1008; color: #c45a1a; border: 1px solid #3a2a10;
-    padding: 3px 10px; font-size: 11px; margin: 2px; cursor: pointer;
-  }
+  .backup-box { background: #0f0f0f; border: 1px solid #2a2a0a; padding: 16px; max-height: 200px; overflow-y: auto; font-size: 11px; color: #888; word-break: break-all; white-space: pre-wrap; margin-top: 8px; }
+  .progress-bar { width: 100%; height: 4px; background: #1a1a1a; margin-top: 12px; }
+  .progress-fill { height: 100%; background: #c45a1a; transition: width 0.3s; }
+  .tag { display: inline-block; background: #1a1008; color: #c45a1a; border: 1px solid #3a2a10; padding: 3px 10px; font-size: 11px; margin: 2px; cursor: pointer; }
   .tag:hover { background: #2a1a0c; }
   .tag .remove { color: #a04040; margin-left: 6px; font-weight: bold; }
-  @media (max-width: 600px) {
-    .container { padding: 20px 16px; }
-    .result-grid { grid-template-columns: 1fr; }
-    .mode-tab { padding: 8px 12px; font-size: 11px; }
-  }
+  @media (max-width: 600px) { .container { padding: 20px 16px; } .result-grid { grid-template-columns: 1fr; } .mode-tab { padding: 8px 12px; font-size: 11px; } }
 </style>
 """
 
@@ -285,7 +238,6 @@ def login_page():
             session["username"] = username
             return redirect("/calculator")
         error = "Invalid credentials."
-
     return f"""<!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NORAI Trade Calculator — Login</title>{BASE_STYLE}
@@ -309,7 +261,7 @@ def logout_page():
     return redirect("/")
 
 # ============================================================
-# CALCULATOR — Full PTN Workflow + Scanner with Diagnostics
+# CALCULATOR
 # ============================================================
 
 @flask_app.route("/calculator")
@@ -321,7 +273,6 @@ def calculator_page():
     user_level = get_user_level(session["username"], data)
     is_admin = user_level >= 50
     saved_favs = json.dumps(user.get("settings", {}).get("favourites", ["platinum", "gold", "tritium"]))
-
     return f"""<!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NORAI Trade Calculator</title>{BASE_STYLE}
@@ -334,28 +285,17 @@ def calculator_page():
   <a href="/settings">Settings</a>
   <a href="/logout" class="logout">Logout</a>
 </div>
-
 <h1>Trade Calculator</h1>
 
 <div class="mode-tabs">
   <div class="mode-tab active" id="tab-pilot" onclick="switchMode('pilot')">Pilot</div>
   <div class="mode-tab" id="tab-carrier" onclick="switchMode('carrier')">Carrier Full Run</div>
-  <div class="mode-tab" id="tab-scanner" onclick="switchMode('scanner')">Multi-Scanner</div>
+  <div class="mode-tab" id="tab-scanner" onclick="switchMode('scanner')">Route Scanner</div>
   <div class="mode-tab" id="tab-reverse" onclick="switchMode('reverse')">Reverse</div>
 </div>
 
-<div style="background:#0f0f0f;border:1px solid #1a1a1a;padding:12px 16px;margin-bottom:20px;">
-<label style="margin-top:0;">Inara API Key</label>
-<div class="inline">
-  <input type="password" id="inara-key" placeholder="Your personal Inara API key..." style="flex:1;max-width:400px;">
-  <label style="margin:0;font-size:11px;"><input type="checkbox" id="remember-key" checked onchange="saveKey()"> Remember</label>
-</div>
-<p style="color:#666;font-size:10px;margin-top:4px;">Stored in this browser only. Never sent to the server except during searches. Get yours at inara.cz → Settings → API.</p>
-</div>
-
-<!-- ===== PILOT MODE ===== -->
 <div id="mode-pilot">
-<p style="color:#888;margin-bottom:16px;">Single pilot buying from a station and selling to a carrier or another station. Commission is flat CR per ton taken by the carrier.</p>
+<p style="color:#888;margin-bottom:16px;">Single pilot buying from a station and selling to a carrier or another station.</p>
 <div class="gap-row">
   <div><label>Commodity</label><input type="text" id="p-commodity" placeholder="e.g. Gold"></div>
   <div><label>Buy Price at Station (CR/t)</label><input type="number" id="p-buy" placeholder="45000" step="1" min="0"></div>
@@ -367,9 +307,8 @@ def calculator_page():
 <div class="gap-row">
   <div><label>Carrier Commission (CR/t)</label><input type="number" id="p-comm" placeholder="10000" step="1" min="0"></div>
 </div>
-<p style="color:#666;font-size:11px;">The carrier pays the pilot: <strong>Buy Price + Commission</strong>. The pilot profits Commission × Tonnage.</p>
+<p style="color:#666;font-size:11px;">Carrier pays pilot: <strong>Buy Price + Commission</strong>. Pilot profits Commission x Tonnage.</p>
 <button class="btn" onclick="calcPilot()">Calculate</button>
-
 <div class="result-box hidden" id="pilot-result">
 <h3>Results — <span id="p-commodity-out"></span></h3>
 <div class="result-grid">
@@ -382,32 +321,30 @@ def calculator_page():
 </div>
 </div>
 
-<!-- ===== CARRIER FULL RUN MODE ===== -->
 <div id="mode-carrier" class="hidden">
-<p style="color:#888;margin-bottom:16px;">Full PTN carrier operation: buy at source, pay loading pilots, jump, sell at destination, pay unloading pilots. Both commissions must be ≥ 10,000 CR/t.</p>
+<p style="color:#888;margin-bottom:16px;">Full PTN carrier operation. Both commissions must be at least 10,000 CR/t.</p>
 <h2>Leg 1 — Loading</h2>
 <div class="gap-row">
   <div><label>Station Buy Price (CR/t)</label><input type="number" id="c-buy" placeholder="45000" step="1" min="0"></div>
   <div><label>Tonnage</label><input type="number" id="c-tons" placeholder="25000" step="1" min="0"></div>
 </div>
 <div class="gap-row">
-  <div><label>Loading Commission (CR/t)</label><input type="number" id="c-load-comm" placeholder="15000" step="1" min="10000"><span style="color:#666;font-size:11px;">Min 10,000 CR/t</span></div>
+  <div><label>Loading Commission (CR/t)</label><input type="number" id="c-load-comm" placeholder="15000" step="1" min="10000"><span style="color:#666;font-size:11px;">Min 10,000</span></div>
 </div>
-<p style="color:#666;font-size:11px;">Carrier buy order price = Station Buy Price + Loading Commission. Carrier pays this to loading pilots.</p>
+<p style="color:#666;font-size:11px;">Carrier buy order = Station Buy Price + Loading Commission.</p>
 <h2>Transit</h2>
 <label>Tritium Fuel Cost (CR)</label><input type="number" id="c-trit" placeholder="0" step="1" min="0" value="0">
-<p style="color:#666;font-size:11px;">Optional — cost of fuel for the carrier jump.</p>
 <h2>Leg 2 — Unloading</h2>
 <div class="gap-row">
   <div><label>Station Sell Price (CR/t)</label><input type="number" id="c-sell" placeholder="85000" step="1" min="0"></div>
 </div>
 <div class="gap-row">
-  <div><label>Unloading Commission (CR/t)</label><input type="number" id="c-unload-comm" placeholder="15000" step="1" min="10000"><span style="color:#666;font-size:11px;">Min 10,000 CR/t</span></div>
+  <div><label>Unloading Commission (CR/t)</label><input type="number" id="c-unload-comm" placeholder="15000" step="1" min="10000"><span style="color:#666;font-size:11px;">Min 10,000</span></div>
 </div>
-<p style="color:#666;font-size:11px;">Carrier sell order price = Station Sell Price - Unloading Commission. Unloading pilots pay this to the carrier.</p>
+<p style="color:#666;font-size:11px;">Carrier sell order = Station Sell Price - Unloading Commission.</p>
 <button class="btn" onclick="calcCarrier()">Calculate</button>
 <div class="result-box hidden" id="carrier-result">
-<h3>Full Run Results — <span id="c-commodity-out"></span></h3>
+<h3>Full Run Results</h3>
 <div class="result-grid">
   <div class="result-item"><label>Carrier Buy Order Price</label><div class="value value-cost" id="c-buy-order"></div></div>
   <div class="result-item"><label>Carrier Sell Order Price</label><div class="value value-profit" id="c-sell-order"></div></div>
@@ -425,10 +362,13 @@ def calculator_page():
 </div>
 </div>
 
-<!-- ===== MULTI-SCANNER MODE ===== -->
 <div id="mode-scanner" class="hidden">
-<p style="color:#888;margin-bottom:16px;">Scan your favourite commodities on Inara for the best volume-safe trade. Finds the highest-profit pairing that has enough supply AND demand for a full carrier load.</p>
-
+<p style="color:#888;margin-bottom:16px;">Scans Spansh for profitable trade routes from your carrier's location. Finds the best volume-safe route from real market data.</p>
+<h2>Carrier Location</h2>
+<div class="gap-row">
+  <div><label>Current System</label><input type="text" id="s-system" placeholder="e.g. Tethlon" value="Tethlon"></div>
+  <div><label>Current Station</label><input type="text" id="s-station" placeholder="e.g. Mallory Orbital" value="Mallory Orbital"></div>
+</div>
 <h2>Favourites</h2>
 <div id="fav-tags" style="margin-bottom:8px;"></div>
 <div class="inline">
@@ -436,7 +376,6 @@ def calculator_page():
   <button class="btn btn-sm" onclick="addFav()" style="margin-top:0;">Add</button>
   <button class="btn btn-sm btn-ghost" onclick="saveFavs()" style="margin-top:0;">Save to Server</button>
 </div>
-
 <h2>Scan Parameters</h2>
 <div class="gap-row">
   <div><label>Tonnage</label><input type="number" id="s-tons" placeholder="25000" step="1" min="0" value="25000"></div>
@@ -448,9 +387,8 @@ def calculator_page():
 </div>
 <div class="gap-row">
   <div><label>Min Carrier Profit (CR total)</label><input type="number" id="s-min-profit" placeholder="250000000" step="1" min="0" value="250000000"></div>
-  <div><label>Max Stations per Commodity</label><input type="number" id="s-max-results" placeholder="20" step="1" min="1" max="50" value="20"></div>
+  <div><label>Max Route Distance (LY)</label><input type="number" id="s-max-dist" placeholder="50000" step="1" min="0" value="50000"></div>
 </div>
-
 <button class="btn" onclick="runScanner()">Scan All Favourites</button>
 <div id="scanner-progress" class="hidden" style="margin-top:16px;">
   <p id="scanner-status" style="color:#888;"></p>
@@ -459,9 +397,8 @@ def calculator_page():
 <div id="scanner-results"></div>
 </div>
 
-<!-- ===== REVERSE MODE ===== -->
 <div id="mode-reverse" class="hidden">
-<p style="color:#888;margin-bottom:16px;">Work backwards: given the station buy price and the commissions you want to offer, find the minimum station sell price you need to hunt for.</p>
+<p style="color:#888;margin-bottom:16px;">Work backwards: given the station buy price and commissions, find the minimum station sell price you need.</p>
 <h2>Your Parameters</h2>
 <div class="gap-row">
   <div><label>Station Buy Price (CR/t)</label><input type="number" id="r-buy" placeholder="45000" step="1" min="0"></div>
@@ -485,7 +422,6 @@ def calculator_page():
   <div class="result-item"><label>Your Total Profit</label><div class="value value-profit" id="r-total-profit"></div></div>
   <div class="result-item"><label>ROI %</label><div class="value" id="r-roi"></div></div>
 </div>
-<p style="color:#888;margin-top:12px;">Search Inara for stations buying at <strong id="r-req-sell2"></strong> or higher. Use the Multi-Scanner to find real matches.</p>
 </div>
 </div>
 
@@ -493,10 +429,8 @@ def calculator_page():
 
 <script>
 var favs = {saved_favs};
-var currentMode = 'pilot';
 
 function switchMode(m) {{
-  currentMode = m;
   ['pilot','carrier','scanner','reverse'].forEach(function(x) {{
     document.getElementById('tab-'+x).classList.toggle('active', x===m);
     document.getElementById('mode-'+x).classList.toggle('hidden', x!==m);
@@ -511,49 +445,27 @@ function fmtShort(n) {{
   return n.toLocaleString('en-US') + ' CR';
 }}
 
-function saveKey() {{
-  if (document.getElementById('remember-key').checked) {{
-    localStorage.setItem('inara_api_key', document.getElementById('inara-key').value);
-  }} else {{
-    localStorage.removeItem('inara_api_key');
-  }}
-}}
-
-window.onload = function() {{
-  var saved = localStorage.getItem('inara_api_key');
-  if (saved) document.getElementById('inara-key').value = saved;
-  renderFavs();
-}};
-document.getElementById('inara-key').addEventListener('input', saveKey);
+window.onload = function() {{ renderFavs(); }};
 
 function renderFavs() {{
   var html = '';
   favs.forEach(function(f, i) {{
     html += '<span class="tag">' + f + '<span class="remove" onclick="removeFav('+i+')">&times;</span></span>';
   }});
-  document.getElementById('fav-tags').innerHTML = html || '<span style="color:#666;">No favourites yet. Add some below.</span>';
+  document.getElementById('fav-tags').innerHTML = html || '<span style="color:#666;">No favourites yet.</span>';
 }}
 function addFav() {{
   var inp = document.getElementById('fav-input');
   var val = inp.value.trim().toLowerCase();
-  if (val && favs.indexOf(val) === -1) {{
-    favs.push(val);
-    renderFavs();
-  }}
+  if (val && favs.indexOf(val) === -1) {{ favs.push(val); renderFavs(); }}
   inp.value = '';
 }}
 function removeFav(i) {{ favs.splice(i,1); renderFavs(); }}
 async function saveFavs() {{
   try {{
-    var resp = await fetch('/save_favourites', {{
-      method: 'POST',
-      headers: {{'Content-Type': 'application/json'}},
-      body: JSON.stringify({{favourites: favs}})
-    }});
-    var data = await resp.json();
-    if (data.status === 'ok') alert('Favourites saved to server.');
-    else alert('Save failed.');
-  }} catch(e) {{ alert('Network error.'); }}
+    var resp = await fetch('/save_favourites', {{ method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify({{favourites: favs}}) }});
+    if ((await resp.json()).status === 'ok') alert('Saved.');
+  }} catch(e) {{ alert('Error.'); }}
 }}
 
 function calcPilot() {{
@@ -561,217 +473,147 @@ function calcPilot() {{
   var sell = parseFloat(document.getElementById('p-sell').value) || 0;
   var tons = parseFloat(document.getElementById('p-tons').value) || 0;
   var comm = parseFloat(document.getElementById('p-comm').value) || 0;
-  var commName = document.getElementById('p-commodity').value || 'Commodity';
-  var stationCost = buy * tons;
-  var carrierPays = sell * tons;
-  var pilotNet = carrierPays - stationCost;
-  var ppt = tons > 0 ? pilotNet / tons : 0;
-  var carrierCostTon = sell;
-  document.getElementById('p-commodity-out').textContent = commName;
-  document.getElementById('p-station-cost').textContent = fmt(Math.round(stationCost));
-  document.getElementById('p-carrier-pays').textContent = fmt(Math.round(carrierPays));
-  document.getElementById('p-net').textContent = fmt(Math.round(pilotNet));
-  document.getElementById('p-ppt').textContent = fmt(Math.round(ppt));
-  document.getElementById('p-carrier-cost-ton').textContent = fmt(Math.round(carrierCostTon));
+  var n = document.getElementById('p-commodity').value || 'Commodity';
+  var sc = buy * tons, cp = sell * tons, pn = cp - sc;
+  document.getElementById('p-commodity-out').textContent = n;
+  document.getElementById('p-station-cost').textContent = fmt(Math.round(sc));
+  document.getElementById('p-carrier-pays').textContent = fmt(Math.round(cp));
+  document.getElementById('p-net').textContent = fmt(Math.round(pn));
+  document.getElementById('p-ppt').textContent = fmt(Math.round(tons>0?pn/tons:0));
+  document.getElementById('p-carrier-cost-ton').textContent = fmt(Math.round(sell));
   document.getElementById('pilot-result').classList.remove('hidden');
 }}
 
 function calcCarrier() {{
   var buy = parseFloat(document.getElementById('c-buy').value) || 0;
   var tons = parseFloat(document.getElementById('c-tons').value) || 0;
-  var loadComm = parseFloat(document.getElementById('c-load-comm').value) || 0;
-  var trit = parseFloat(document.getElementById('c-trit').value) || 0;
+  var lc = parseFloat(document.getElementById('c-load-comm').value) || 0;
+  var tr = parseFloat(document.getElementById('c-trit').value) || 0;
   var sell = parseFloat(document.getElementById('c-sell').value) || 0;
-  var unloadComm = parseFloat(document.getElementById('c-unload-comm').value) || 0;
-  var cBuyOrder = buy + loadComm;
-  var cSellOrder = sell - unloadComm;
-  var loadCost = cBuyOrder * tons;
-  var unloadRev = cSellOrder * tons;
-  var net = unloadRev - loadCost - trit;
-  var ppt = tons > 0 ? net / tons : 0;
-  document.getElementById('c-commodity-out').textContent = 'Full Run';
-  document.getElementById('c-buy-order').textContent = fmt(Math.round(cBuyOrder)) + ' /t';
-  document.getElementById('c-sell-order').textContent = fmt(Math.round(cSellOrder)) + ' /t';
-  document.getElementById('c-load-cost').textContent = fmtShort(Math.round(loadCost));
-  document.getElementById('c-unload-rev').textContent = fmtShort(Math.round(unloadRev));
+  var uc = parseFloat(document.getElementById('c-unload-comm').value) || 0;
+  var bo = buy + lc, so = sell - uc;
+  var lcost = bo * tons, urev = so * tons, net = urev - lcost - tr, ppt = tons>0?net/tons:0;
+  document.getElementById('c-buy-order').textContent = fmt(Math.round(bo)) + ' /t';
+  document.getElementById('c-sell-order').textContent = fmt(Math.round(so)) + ' /t';
+  document.getElementById('c-load-cost').textContent = fmtShort(Math.round(lcost));
+  document.getElementById('c-unload-rev').textContent = fmtShort(Math.round(urev));
   document.getElementById('c-net').textContent = fmtShort(Math.round(net));
   document.getElementById('c-ppt').textContent = fmt(Math.round(ppt));
-  document.getElementById('c-load-ppt').textContent = fmt(Math.round(loadComm));
-  document.getElementById('c-unload-ppt').textContent = fmt(Math.round(unloadComm));
-  var warn = '';
-  if (loadComm < 10000) warn += '<p class="flash flash-error">Loading commission below 10,000 CR/t minimum.</p>';
-  if (unloadComm < 10000) warn += '<p class="flash flash-error">Unloading commission below 10,000 CR/t minimum.</p>';
-  if (ppt < 0) warn += '<p class="flash flash-error">NET LOSS: carrier loses ' + fmt(Math.round(-ppt)) + ' per ton.</p>';
-  document.getElementById('c-commission-warn').innerHTML = warn;
+  document.getElementById('c-load-ppt').textContent = fmt(Math.round(lc));
+  document.getElementById('c-unload-ppt').textContent = fmt(Math.round(uc));
+  var w = '';
+  if (lc < 10000) w += '<p class="flash flash-error">Loading commission below 10,000 CR/t.</p>';
+  if (uc < 10000) w += '<p class="flash flash-error">Unloading commission below 10,000 CR/t.</p>';
+  if (ppt < 0) w += '<p class="flash flash-error">NET LOSS</p>';
+  document.getElementById('c-commission-warn').innerHTML = w;
   document.getElementById('carrier-result').classList.remove('hidden');
 }}
 
 function calcReverse() {{
   var buy = parseFloat(document.getElementById('r-buy').value) || 0;
   var tons = parseFloat(document.getElementById('r-tons').value) || 0;
-  var loadComm = parseFloat(document.getElementById('r-load-comm').value) || 0;
-  var unloadComm = parseFloat(document.getElementById('r-unload-comm').value) || 0;
-  var minPpt = parseFloat(document.getElementById('r-min-ppt').value) || 0;
-  var reqSell = buy + loadComm + unloadComm + minPpt;
-  var spread = reqSell - buy;
-  var cBuyOrder = buy + loadComm;
-  var cSellOrder = reqSell - unloadComm;
-  var totalProfit = minPpt * tons;
-  var roi = cBuyOrder > 0 ? (minPpt / cBuyOrder) * 100 : 0;
-  document.getElementById('r-req-sell').textContent = fmt(Math.round(reqSell)) + ' /t';
-  document.getElementById('r-req-sell2').textContent = fmt(Math.round(reqSell)) + ' /t';
-  document.getElementById('r-spread').textContent = fmt(Math.round(spread)) + ' /t';
-  document.getElementById('r-buy-order').textContent = fmt(Math.round(cBuyOrder)) + ' /t';
-  document.getElementById('r-sell-order').textContent = fmt(Math.round(cSellOrder)) + ' /t';
-  document.getElementById('r-total-profit').textContent = fmtShort(Math.round(totalProfit));
-  document.getElementById('r-roi').textContent = roi.toFixed(1) + '%';
+  var lc = parseFloat(document.getElementById('r-load-comm').value) || 0;
+  var uc = parseFloat(document.getElementById('r-unload-comm').value) || 0;
+  var mp = parseFloat(document.getElementById('r-min-ppt').value) || 0;
+  var rs = buy + lc + uc + mp;
+  document.getElementById('r-req-sell').textContent = fmt(Math.round(rs)) + ' /t';
+  document.getElementById('r-spread').textContent = fmt(Math.round(rs - buy)) + ' /t';
+  document.getElementById('r-buy-order').textContent = fmt(Math.round(buy + lc)) + ' /t';
+  document.getElementById('r-sell-order').textContent = fmt(Math.round(rs - uc)) + ' /t';
+  document.getElementById('r-total-profit').textContent = fmtShort(Math.round(mp * tons));
+  document.getElementById('r-roi').textContent = ((buy+lc)>0 ? (mp/(buy+lc)*100).toFixed(1) : '0.0') + '%';
   document.getElementById('reverse-result').classList.remove('hidden');
 }}
 
-// ---- MULTI-SCANNER with Diagnostics ----
 async function runScanner() {{
-  var key = document.getElementById('inara-key').value.trim();
-  if (!key) {{ alert('Enter your Inara API key first.'); return; }}
-  saveKey();
-  if (favs.length === 0) {{ alert('Add at least one commodity to your favourites.'); return; }}
-
-  var resultDiv = document.getElementById('scanner-results');
-  var progressDiv = document.getElementById('scanner-progress');
-  var statusEl = document.getElementById('scanner-status');
-  var barEl = document.getElementById('scanner-bar');
+  var sys = document.getElementById('s-system').value.trim();
+  var stn = document.getElementById('s-station').value.trim();
+  if (!sys || !stn) {{ alert('Enter your carrier system and station.'); return; }}
+  if (favs.length === 0) {{ alert('Add at least one commodity.'); return; }}
 
   var params = {{
-    api_key: key,
+    system: sys,
+    station: stn,
     commodities: favs,
     tonnage: parseFloat(document.getElementById('s-tons').value) || 25000,
     safety_margin: parseFloat(document.getElementById('s-safety').value) || 5000,
     commission_load: parseFloat(document.getElementById('s-load-comm').value) || 15000,
     commission_unload: parseFloat(document.getElementById('s-unload-comm').value) || 15000,
     min_profit_total: parseFloat(document.getElementById('s-min-profit').value) || 250000000,
-    max_results: parseInt(document.getElementById('s-max-results').value) || 20
+    max_distance: parseFloat(document.getElementById('s-max-dist').value) || 50000
   }};
+
+  var resultDiv = document.getElementById('scanner-results');
+  var progressDiv = document.getElementById('scanner-progress');
+  var statusEl = document.getElementById('scanner-status');
+  var barEl = document.getElementById('scanner-bar');
 
   resultDiv.innerHTML = '';
   progressDiv.classList.remove('hidden');
-  statusEl.textContent = 'Scanning ' + favs.length + ' commodities...';
-  barEl.style.width = '0%';
+  statusEl.textContent = 'Submitting ' + favs.length + ' route requests to Spansh...';
+  barEl.style.width = '5%';
 
-  var allResults = [];
-  var scanDiags = [];
-  var scansRun = 0;
-
-  for (var i = 0; i < favs.length; i++) {{
-    statusEl.textContent = 'Scanning ' + favs[i] + ' (' + (i+1) + '/' + favs.length + ')...';
-    barEl.style.width = ((i / favs.length) * 100) + '%';
-
-    try {{
-      var resp = await fetch('/api/scan-commodity', {{
-        method: 'POST',
-        headers: {{'Content-Type': 'application/json'}},
-        body: JSON.stringify({{
-          api_key: params.api_key,
-          commodity: favs[i],
-          max_results: params.max_results,
-          tonnage: params.tonnage,
-          safety_margin: params.safety_margin,
-          commission_load: params.commission_load,
-          commission_unload: params.commission_unload,
-          min_profit_total: params.min_profit_total
-        }})
-      }});
-      var data = await resp.json();
-      if (data.diagnostic) {{
-        scanDiags.push(data.diagnostic);
-      }}
-      if (data.best_trade) {{
-        allResults.push({{commodity: favs[i], trade: data.best_trade, stations_checked: data.stations_checked}});
-      }}
-      scansRun++;
-    }} catch(e) {{
-      scansRun++;
-    }}
-  }}
-
-  barEl.style.width = '100%';
-  statusEl.textContent = 'Scan complete. ' + scansRun + ' commodities checked, ' + allResults.length + ' viable trades found.';
-
-  // --- NO TRADES FOUND: show diagnostics ---
-  if (allResults.length === 0) {{
-    var html = '<div class="result-box"><p style="color:#a04040;">No viable trades found.</p>';
-
-    html += '<h3 style="margin-top:16px;">Per-Commodity Diagnostics</h3>';
-    html += '<table><thead><tr><th>Commodity</th><th>Buy Stns</th><th>Sell Stns</th><th>Valid Buys</th><th>Valid Sells</th><th>Best Supply</th><th>Best Demand</th><th>Requires</th></tr></thead><tbody>';
-
-    for (var j = 0; j < scanDiags.length; j++) {{
-      var d = scanDiags[j];
-      html += '<tr>';
-      html += '<td style="color:#c45a1a;">' + d.commodity + '</td>';
-      html += '<td>' + d.buy_stations_total + '</td>';
-      html += '<td>' + d.sell_stations_total + '</td>';
-      html += '<td style="color:' + (d.valid_buys > 0 ? '#6a9a5b' : '#a04040') + ';">' + d.valid_buys + '</td>';
-      html += '<td style="color:' + (d.valid_sells > 0 ? '#6a9a5b' : '#a04040') + ';">' + d.valid_sells + '</td>';
-      html += '<td>' + (d.best_supply_found || 0).toLocaleString() + ' t</td>';
-      html += '<td>' + (d.best_demand_found || 0).toLocaleString() + ' t</td>';
-      html += '<td style="color:#666;">' + d.req_vol.toLocaleString() + ' t</td>';
-      html += '</tr>';
-    }}
-    html += '</tbody></table>';
-
-    // Sample raw API data
-    if (scanDiags.length > 0) {{
-      var sample = scanDiags[0];
-      html += '<h3 style="margin-top:16px;">Sample API Data (' + sample.commodity + ')</h3>';
-      if (sample.sample_buy) {{
-        html += '<p style="color:#888;font-size:12px;">First buy station: ' + sample.sample_buy.station + ' (' + sample.sample_buy.system + ') | Price: ' + (sample.sample_buy.price || 0).toLocaleString() + ' CR/t | Supply: ' + (sample.sample_buy.supply || 0).toLocaleString() + ' t</p>';
-        html += '<p style="color:#666;font-size:11px;">Raw API keys on buy data: ' + sample.sample_buy.all_keys.join(', ') + '</p>';
-      }}
-      if (sample.sample_sell) {{
-        html += '<p style="color:#888;font-size:12px;">First sell station: ' + sample.sample_sell.station + ' (' + sample.sample_sell.system + ') | Price: ' + (sample.sample_sell.price || 0).toLocaleString() + ' CR/t | Demand: ' + (sample.sample_sell.demand || 0).toLocaleString() + ' t</p>';
-        html += '<p style="color:#666;font-size:11px;">Raw API keys on sell data: ' + sample.sample_sell.all_keys.join(', ') + '</p>';
-      }}
-    }}
-
-    html += '</div>';
-    resultDiv.innerHTML = html;
+  try {{
+    var resp = await fetch('/api/scan-commodity', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify(params)
+    }});
+    var data = await resp.json();
+  }} catch(e) {{
+    resultDiv.innerHTML = '<div class="result-box"><p class="flash flash-error">Network error.</p></div>';
+    progressDiv.classList.add('hidden');
     return;
   }}
 
-  // --- TRADES FOUND: show results ---
-  allResults.sort(function(a,b) {{ return b.trade.total_profit - a.trade.total_profit; }});
+  if (data.error) {{
+    resultDiv.innerHTML = '<div class="result-box"><p class="flash flash-error">' + data.error + '</p></div>';
+    progressDiv.classList.add('hidden');
+    return;
+  }}
 
-  var html = '<h2 style="margin-top:24px;">Best Trade Found</h2>';
-  var best = allResults[0];
+  statusEl.textContent = 'Scan complete. ' + data.total_trades + ' trades found across ' + data.commodities_scanned + ' commodities.';
+  barEl.style.width = '100%';
+
+  if (!data.trades || data.trades.length === 0) {{
+    resultDiv.innerHTML = '<div class="result-box"><p style="color:#a04040;">No viable trades found from ' + sys + ' / ' + stn + '.</p><p style="color:#666;margin-top:8px;">Try different commodities, a larger max distance, or a different reference station.</p></div>';
+    return;
+  }}
+
+  data.trades.sort(function(a,b) {{ return b.carrier_total_profit - a.carrier_total_profit; }});
+
+  var html = '<h2 style="margin-top:24px;">Best Trade</h2>';
+  var t = data.trades[0];
   html += '<div class="result-box">';
-  html += '<h3>' + best.commodity.toUpperCase() + '</h3>';
+  html += '<h3>' + t.commodity.toUpperCase() + '</h3>';
   html += '<div class="result-grid">';
-  html += '<div class="result-item"><label>Buy Station</label><div class="value" style="font-size:14px;">' + best.trade.buy_station + '</div><div style="color:#666;font-size:11px;">' + best.trade.buy_system + '</div></div>';
-  html += '<div class="result-item"><label>Sell Station</label><div class="value" style="font-size:14px;">' + best.trade.sell_station + '</div><div style="color:#666;font-size:11px;">' + best.trade.sell_system + '</div></div>';
-  html += '<div class="result-item"><label>Buy Price</label><div class="value value-cost">' + best.trade.buy_price.toLocaleString() + ' CR/t</div><div style="color:#666;font-size:11px;">Supply: ' + best.trade.supply.toLocaleString() + ' t</div></div>';
-  html += '<div class="result-item"><label>Sell Price</label><div class="value value-profit">' + best.trade.sell_price.toLocaleString() + ' CR/t</div><div style="color:#666;font-size:11px;">Demand: ' + best.trade.demand.toLocaleString() + ' t</div></div>';
-  html += '<div class="result-item"><label>Spread</label><div class="value value-neutral">' + best.trade.spread.toLocaleString() + ' CR/t</div></div>';
-  html += '<div class="result-item"><label>Carrier Net Profit</label><div class="value value-profit">' + best.trade.total_profit.toLocaleString() + ' CR</div><div style="color:#666;font-size:11px;">' + best.trade.owner_profit_ton.toLocaleString() + ' CR/t</div></div>';
+  html += '<div class="result-item"><label>Buy at</label><div class="value" style="font-size:14px;">' + t.source_station + '</div><div style="color:#666;font-size:11px;">' + t.source_system + ' | ' + t.buy_price.toLocaleString() + ' CR/t</div></div>';
+  html += '<div class="result-item"><label>Sell at</label><div class="value" style="font-size:14px;">' + t.dest_station + '</div><div style="color:#666;font-size:11px;">' + t.dest_system + ' | ' + t.sell_price.toLocaleString() + ' CR/t</div></div>';
+  html += '<div class="result-item"><label>Volume</label><div class="value">' + t.available_amount.toLocaleString() + ' t</div></div>';
+  html += '<div class="result-item"><label>Distance</label><div class="value">' + t.distance_ly.toFixed(0) + ' LY</div></div>';
+  html += '<div class="result-item"><label>Spread</label><div class="value value-neutral">' + (t.sell_price - t.buy_price).toLocaleString() + ' CR/t</div></div>';
+  html += '<div class="result-item"><label>Carrier Profit</label><div class="value value-profit">' + t.carrier_total_profit.toLocaleString() + ' CR</div><div style="color:#666;font-size:11px;">' + t.carrier_profit_per_ton.toLocaleString() + ' CR/t</div></div>';
   html += '</div>';
   html += '<p style="margin-top:16px;color:#888;">';
-  html += '<strong>Carrier Buy Order:</strong> ' + (best.trade.buy_price + params.commission_load).toLocaleString() + ' CR/t &nbsp;|&nbsp;';
-  html += '<strong>Carrier Sell Order:</strong> ' + (best.trade.sell_price - params.commission_unload).toLocaleString() + ' CR/t';
+  html += '<strong>Carrier Buy Order:</strong> ' + (t.buy_price + params.commission_load).toLocaleString() + ' CR/t | ';
+  html += '<strong>Carrier Sell Order:</strong> ' + (t.sell_price - params.commission_unload).toLocaleString() + ' CR/t';
   html += '</p></div>';
 
-  if (allResults.length > 1) {{
-    html += '<h3>All Viable Trades (' + allResults.length + ')</h3>';
-    html += '<table><thead><tr><th>Commodity</th><th>Buy</th><th>Sell</th><th>Spread</th><th>Profit/t</th><th>Total Profit</th></tr></thead><tbody>';
-    allResults.forEach(function(r) {{
+  if (data.trades.length > 1) {{
+    html += '<h3>All Viable Trades (' + data.trades.length + ')</h3>';
+    html += '<table><thead><tr><th>Comm</th><th>Buy</th><th>Sell</th><th>Vol</th><th>P/t</th><th>Total</th></tr></thead><tbody>';
+    data.trades.forEach(function(r) {{
       html += '<tr>';
       html += '<td style="color:#c45a1a;">' + r.commodity + '</td>';
-      html += '<td>' + r.trade.buy_price.toLocaleString() + '</td>';
-      html += '<td>' + r.trade.sell_price.toLocaleString() + '</td>';
-      html += '<td>' + r.trade.spread.toLocaleString() + '</td>';
-      html += '<td style="color:#6a9a5b;">' + r.trade.owner_profit_ton.toLocaleString() + '</td>';
-      html += '<td style="color:#6a9a5b;">' + r.trade.total_profit.toLocaleString() + '</td>';
+      html += '<td>' + r.source_station + ' ' + r.buy_price.toLocaleString() + '</td>';
+      html += '<td>' + r.dest_station + ' ' + r.sell_price.toLocaleString() + '</td>';
+      html += '<td>' + r.available_amount.toLocaleString() + '</td>';
+      html += '<td style="color:#6a9a5b;">' + r.carrier_profit_per_ton.toLocaleString() + '</td>';
+      html += '<td style="color:#6a9a5b;">' + r.carrier_total_profit.toLocaleString() + '</td>';
       html += '</tr>';
     }});
     html += '</tbody></table>';
   }}
-
   resultDiv.innerHTML = html;
 }}
 </script>
@@ -785,38 +627,24 @@ def settings_page():
     if request.method == "POST":
         data = load_accounts()
         user = data["users"].get(session["username"])
-        current_pw = request.form.get("current_password", "")
-        new_pw = request.form.get("new_password", "")
-        if user and check_password(current_pw, user["password_hash"]):
-            user["password_hash"] = hash_password(new_pw)
+        pw = request.form.get("current_password", "")
+        np = request.form.get("new_password", "")
+        if user and check_password(pw, user["password_hash"]):
+            user["password_hash"] = hash_password(np)
             save_accounts(data)
             msg = ("ok", "Password changed.")
         else:
-            msg = ("error", "Current password is incorrect.")
-
-    role_label = get_user_role_label(session["username"])
-    return f"""<!DOCTYPE html><html lang="en"><head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Settings — NORAI Trade Calculator</title>{BASE_STYLE}
-</head><body>
-<div class="container">
-<div class="user-bar">Logged in as: <strong style="color:#c45a1a;">{session['username']}</strong> [{role_label}]</div>
-<div class="nav">
-  <a href="/calculator">Calculator</a>
-  <a href="/settings" class="active">Settings</a>
-  <a href="/logout" class="logout">Logout</a>
-</div>
+            msg = ("error", "Current password incorrect.")
+    rl = get_user_role_label(session["username"])
+    return f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Settings</title>{BASE_STYLE}</head><body>
+<div class="container"><div class="user-bar">Logged in as: <strong style="color:#c45a1a;">{session['username']}</strong> [{rl}]</div>
+<div class="nav"><a href="/calculator">Calculator</a><a href="/settings" class="active">Settings</a><a href="/logout" class="logout">Logout</a></div>
 <h1>Settings</h1>
 {"<p class='flash flash-" + msg[0] + "'>" + msg[1] + "</p>" if msg else ""}
-<form method="POST">
-<h2>Change Password</h2>
+<form method="POST"><h2>Change Password</h2>
 <label>Current Password</label><input type="password" name="current_password" required>
 <label>New Password</label><input type="password" name="new_password" required>
-<button type="submit" class="btn">Update Password</button>
-</form>
-<h2>Inara API Key</h2>
-<p style="color:#888;">Your Inara API key is stored in this browser only. The server never sees it except when relaying search requests — it is never written to disk.</p>
-<p style="color:#666;font-size:12px;">To update it, return to the Calculator and enter a new key.</p>
+<button type="submit" class="btn">Update Password</button></form>
 </div></body></html>"""
 
 # -- Save Favourites --
@@ -826,7 +654,7 @@ def save_favourites():
     data = load_accounts()
     user = data["users"].get(session["username"])
     if not user:
-        return jsonify({"status": "error", "message": "User not found"}), 404
+        return jsonify({"status": "error"}), 404
     favs = request.get_json().get("favourites", [])
     if "settings" not in user:
         user["settings"] = {}
@@ -841,14 +669,12 @@ def admin_page():
     msg = None
     user_level = get_user_level(session["username"])
     is_ceo = user_level >= 100
-
     if request.method == "POST":
         action = request.form.get("action", "")
         data = load_accounts()
-
         if action == "add" and user_level >= 50:
             new_user = request.form.get("new_username", "").lower().strip()
-            new_pw   = request.form.get("new_password", "")
+            new_pw = request.form.get("new_password", "")
             new_role = request.form.get("new_role", "staff")
             if new_user and new_pw and new_user not in data["users"]:
                 if new_role not in data["roles"]:
@@ -863,7 +689,6 @@ def admin_page():
                 msg = ("ok", f"Account '{new_user}' created.")
             else:
                 msg = ("error", "Invalid username or username already exists.")
-
         elif action == "remove" and user_level >= 50:
             target = request.form.get("remove_user", "").lower().strip()
             if target == "k.north":
@@ -878,7 +703,6 @@ def admin_page():
                     msg = ("ok", f"Account '{target}' removed.")
                 else:
                     msg = ("error", "User not found.")
-
         elif action == "change_role" and user_level >= 50:
             target = request.form.get("role_user", "").lower().strip()
             new_role = request.form.get("role_value", "staff")
@@ -896,7 +720,6 @@ def admin_page():
                     msg = ("ok", f"Role for '{target}' set to '{new_role}'.")
             else:
                 msg = ("error", "User not found.")
-
         elif action == "add_role" and is_ceo:
             role_name = request.form.get("role_name", "").lower().strip()
             role_label = request.form.get("role_label", "").strip()
@@ -912,7 +735,6 @@ def admin_page():
                     msg = ("ok", f"Role '{role_label}' created.")
             else:
                 msg = ("error", "Invalid or duplicate role name.")
-
         elif action == "remove_role" and is_ceo:
             role_name = request.form.get("remove_role", "").lower().strip()
             if role_name in ("ceo", "staff"):
@@ -926,27 +748,21 @@ def admin_page():
                 msg = ("ok", f"Role '{role_name}' removed.")
             else:
                 msg = ("error", "Role not found.")
-
     data = load_accounts()
     role_label = get_user_role_label(session["username"], data)
-
     users_html = ""
     for name, info in data["users"].items():
         ur = info.get("role", "staff")
         rl = data["roles"].get(ur, {}).get("label", ur)
         users_html += f"<tr><td>{name}</td><td>{rl}</td><td>{info.get('discord_id','—')}</td></tr>"
-
     role_options = "".join(
         f"<option value='{rn}'>{ri['label']} (Level {ri['level']})</option>"
         for rn, ri in data["roles"].items()
     )
-
     roles_html = ""
     for rn, ri in data["roles"].items():
         roles_html += f"<tr><td>{ri['label']}</td><td>{rn}</td><td>{ri['level']}</td></tr>"
-
     backup_json = get_backup_json()
-
     return f"""<!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Admin — NORAI Trade Calculator</title>{BASE_STYLE}
@@ -961,34 +777,28 @@ def admin_page():
 </div>
 <h1>Account Management</h1>
 {"<p class='flash flash-" + msg[0] + "'>" + msg[1] + "</p>" if msg else ""}
-
 <h2>Registered Users</h2>
 <table><thead><tr><th>Username</th><th>Role</th><th>Discord ID</th></tr></thead><tbody>{users_html}</tbody></table>
-
 <h2>Add User</h2>
 <form method="POST"><input type="hidden" name="action" value="add">
 <label>Username</label><input type="text" name="new_username" required>
 <label>Password</label><input type="password" name="new_password" required>
 <label>Role</label><select name="new_role">{role_options}</select>
 <button type="submit" class="btn">Create Account</button></form>
-
 <h2>Remove User</h2>
 <form method="POST"><input type="hidden" name="action" value="remove">
 <label>Username</label><input type="text" name="remove_user" required>
 <button type="submit" class="btn btn-danger btn-sm">Remove</button></form>
-
 <h2>Change Role</h2>
 <form method="POST"><input type="hidden" name="action" value="change_role">
 <label>Username</label><input type="text" name="role_user" required>
 <label>New Role</label><select name="role_value">{role_options}</select>
 <button type="submit" class="btn">Change Role</button></form>
-
 {"<hr style='border-color:#1a1a1a;margin:40px 0;'><h2 style='color:#c45a1a;'>Role Management [CEO]</h2>" if is_ceo else ""}
 {"<h3>Current Roles</h3><table><thead><tr><th>Label</th><th>Name</th><th>Level</th></tr></thead><tbody>" + roles_html + "</tbody></table>" if is_ceo else ""}
 {"<h3>Add New Role</h3><form method='POST'><input type='hidden' name='action' value='add_role'><label>Role Name (internal, lowercase)</label><input type='text' name='role_name' required><label>Display Label</label><input type='text' name='role_label' required><label>Clearance Level (1-99)</label><input type='number' name='role_level' value='30' min='1' max='99'><button type='submit' class='btn'>Create Role</button></form>" if is_ceo else ""}
 {"<h3>Remove Role</h3><form method='POST'><input type='hidden' name='action' value='remove_role'><label>Role Name</label><input type='text' name='remove_role' required><button type='submit' class='btn btn-danger btn-sm'>Remove Role</button></form><p style='color:#666;font-size:11px;'>Users with this role will be reassigned to Staff.</p>" if is_ceo else ""}
 {"<h3>Export Backup</h3><p style='color:#888;'>Copy this JSON and paste into <code>ACCOUNTS_BACKUP</code> env var on Render.</p><div class='backup-box' id='backup-json'>" + backup_json + "</div><button class='btn btn-sm' onclick='copyBackup()' style='margin-top:8px;'>Copy to Clipboard</button>" if is_ceo else ""}
-
 </div>
 {"<script>function copyBackup(){{var t=document.getElementById('backup-json').innerText;navigator.clipboard.writeText(t).then(function(){{alert('Backup copied.');}});}}</script>" if is_ceo else ""}
 </body></html>"""
@@ -999,151 +809,129 @@ def health():
     return "NORAI operational."
 
 # ============================================================
-# INARA API — Single Commodity Scan with Diagnostics
+# SPANSH ROUTE SCANNER
 # ============================================================
-
-def inara_call(api_key, event_name, event_data):
-    payload = {
-        "header": {
-            "appName": "NORAI Trade Calculator",
-            "appVersion": "2.2",
-            "APIkey": api_key
-        },
-        "events": [{
-            "eventName": event_name,
-            "eventTimestamp": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "eventData": event_data
-        }]
-    }
-    try:
-        logger.info(f"Inara call: {event_name} for {event_data.get('commodityName', '?')}")
-        resp = requests.post(INARA_API_URL, json=payload, timeout=20)
-        logger.info(f"Inara response status: {resp.status_code}")
-        result = resp.json()
-        logger.info(f"Inara full response: {json.dumps(result)[:500]}")
-        events = result.get("events", [])
-        if events:
-            status = events[0].get("eventStatus")
-            status_text = events[0].get("eventStatusText", "")
-            event_data_result = events[0].get("eventData", [])
-            logger.info(f"Inara event status: {status} - {status_text}, data count: {len(event_data_result) if isinstance(event_data_result, list) else 'N/A'}")
-            if status == 200:
-                return event_data_result
-            else:
-                logger.warning(f"Inara API non-200: {status} {status_text}")
-        return []
-    except requests.RequestException as e:
-        logger.error(f"Inara API request error: {e}")
-        return []
-    except Exception as e:
-        logger.error(f"Inara API parse error: {e}")
-        return []
-
 
 @flask_app.route("/api/scan-commodity", methods=["POST"])
 @login_required
 def scan_commodity():
     data = request.get_json()
-    api_key = data.get("api_key", "").strip()
-    commodity = data.get("commodity", "").strip().lower()
-    max_results = int(data.get("max_results", 20))
+    system = data.get("system", "").strip()
+    station = data.get("station", "").strip()
+    commodities = data.get("commodities", [])
     tonnage = float(data.get("tonnage", 25000))
     safety = float(data.get("safety_margin", 5000))
     comm_load = float(data.get("commission_load", 15000))
     comm_unload = float(data.get("commission_unload", 15000))
     min_profit_total = float(data.get("min_profit_total", 250000000))
+    max_distance = float(data.get("max_distance", 50000))
 
-    if not api_key or not commodity:
-        return jsonify({"error": "API key and commodity required."}), 400
+    if not system or not station:
+        return jsonify({"error": "System and station are required."})
+    if not commodities:
+        return jsonify({"error": "No commodities provided."})
 
     req_vol = tonnage + safety
-    min_ppt = min_profit_total / tonnage
+    all_trades = []
+    scanned = 0
 
-    buy_stations = inara_call(api_key, "getCommodityBestBuyStations", {
-        "commodityName": commodity,
-        "maxResults": max_results
-    })
-    sell_stations = inara_call(api_key, "getCommodityBestSellStations", {
-        "commodityName": commodity,
-        "maxResults": max_results
-    })
+    for commodity in commodities:
+        try:
+            params = {
+                "commodity": commodity,
+                "system": system,
+                "station": station,
+                "max_distance": int(max_distance),
+                "limit": 10
+            }
+            resp = requests.get(SPANSH_ROUTE_URL, params=params, timeout=15)
+            resp.raise_for_status()
+            job_data = resp.json()
+            if job_data.get("error"):
+                logger.warning(f"Spansh error for {commodity}: {job_data['error']}")
+                continue
+            job_id = job_data.get("job")
+            if not job_id:
+                continue
 
-    diag = {
-        "commodity": commodity,
-        "buy_stations_total": len(buy_stations),
-        "sell_stations_total": len(sell_stations),
-        "req_vol": req_vol,
-        "tonnage": tonnage,
-        "safety": safety,
-        "comm_load": comm_load,
-        "comm_unload": comm_unload,
-        "min_ppt": min_ppt,
-        "min_profit_total": min_profit_total,
-    }
+            # Poll for results (up to 24 seconds)
+            result_data = None
+            for attempt in range(12):
+                time.sleep(2)
+                result_resp = requests.get(f"{SPANSH_RESULT_URL}/{job_id}", timeout=10)
+                result_resp.raise_for_status()
+                result_data = result_resp.json()
+                state = result_data.get("state", result_data.get("status", ""))
+                if state in ("completed", "ok"):
+                    break
+                elif state == "error":
+                    logger.warning(f"Spansh job {job_id} errored for {commodity}")
+                    result_data = None
+                    break
+            else:
+                logger.warning(f"Spansh job {job_id} timed out for {commodity}")
+                continue
 
-    if buy_stations:
-        diag["sample_buy"] = {
-            "station": buy_stations[0].get("stationName", "?"),
-            "system": buy_stations[0].get("starsystemName", "?"),
-            "price": buy_stations[0].get("buyPrice", 0),
-            "supply": buy_stations[0].get("supply", 0),
-            "all_keys": list(buy_stations[0].keys())
-        }
-    if sell_stations:
-        diag["sample_sell"] = {
-            "station": sell_stations[0].get("stationName", "?"),
-            "system": sell_stations[0].get("starsystemName", "?"),
-            "price": sell_stations[0].get("sellPrice", 0),
-            "demand": sell_stations[0].get("demand", 0),
-            "all_keys": list(sell_stations[0].keys())
-        }
+            if not result_data:
+                continue
+            scanned += 1
 
-    valid_buys = [s for s in buy_stations if s.get("supply", 0) >= req_vol]
-    valid_sells = [s for s in sell_stations if s.get("demand", 0) >= req_vol]
+            routes = result_data.get("result", [])
+            for route in routes:
+                source_info = route.get("source", {})
+                dest_info = route.get("destination", {})
+                for comm in route.get("commodities", []):
+                    sc = comm.get("source_commodity", {})
+                    dc = comm.get("destination_commodity", {})
+                    buy_price = sc.get("buy_price", 0)
+                    sell_price = dc.get("sell_price", 0)
+                    supply = sc.get("supply", 0)
+                    demand = dc.get("demand", 0)
+                    amount = comm.get("amount", 0)
+                    if supply < req_vol and amount < req_vol:
+                        continue
+                    if demand < req_vol:
+                        continue
+                    trade_volume = min(amount, tonnage)
+                    spread = sell_price - buy_price
+                    carrier_ppt = spread - comm_load - comm_unload
+                    carrier_total = carrier_ppt * trade_volume
+                    if carrier_total < min_profit_total:
+                        continue
+                    all_trades.append({
+                        "commodity": comm.get("name", commodity),
+                        "source_system": source_info.get("system", "?"),
+                        "source_station": source_info.get("station", "?"),
+                        "dest_system": dest_info.get("system", "?"),
+                        "dest_station": dest_info.get("station", "?"),
+                        "buy_price": buy_price,
+                        "sell_price": sell_price,
+                        "supply": supply,
+                        "demand": demand,
+                        "available_amount": amount,
+                        "trade_volume": trade_volume,
+                        "distance_ly": route.get("distance", 0),
+                        "spread": spread,
+                        "carrier_profit_per_ton": carrier_ppt,
+                        "carrier_total_profit": carrier_total
+                    })
+        except requests.RequestException as e:
+            logger.error(f"Spansh request error for {commodity}: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error scanning {commodity}: {e}")
 
-    diag["valid_buys"] = len(valid_buys)
-    diag["valid_sells"] = len(valid_sells)
-
-    if buy_stations:
-        diag["best_supply_found"] = max(s.get("supply", 0) for s in buy_stations)
-    if sell_stations:
-        diag["best_demand_found"] = max(s.get("demand", 0) for s in sell_stations)
-
-    if not valid_buys or not valid_sells:
-        return jsonify({
-            "best_trade": None,
-            "diagnostic": diag,
-            "message": f"No stations with sufficient volume (need {req_vol:,.0f}t supply AND demand). Best supply: {diag.get('best_supply_found', 0):,}t, Best demand: {diag.get('best_demand_found', 0):,}t"
-        })
-
-    best_trade = None
-    best_total = -float("inf")
-
-    for buy in valid_buys:
-        for sell in valid_sells:
-            spread = sell["sellPrice"] - buy["buyPrice"]
-            profit_ton = spread - comm_load - comm_unload
-            total = profit_ton * tonnage
-            if total >= min_profit_total and total > best_total:
-                best_total = total
-                best_trade = {
-                    "buy_station": buy.get("stationName", "?"),
-                    "buy_system": buy.get("starsystemName", buy.get("systemName", "?")),
-                    "buy_price": buy["buyPrice"],
-                    "supply": buy.get("supply", 0),
-                    "sell_station": sell.get("stationName", "?"),
-                    "sell_system": sell.get("starsystemName", sell.get("systemName", "?")),
-                    "sell_price": sell["sellPrice"],
-                    "demand": sell.get("demand", 0),
-                    "spread": spread,
-                    "owner_profit_ton": profit_ton,
-                    "total_profit": total
-                }
-
+    seen = {}
+    for t in all_trades:
+        key = f"{t['commodity']}|{t['source_system']}|{t['dest_system']}"
+        if key not in seen or t["carrier_total_profit"] > seen[key]["carrier_total_profit"]:
+            seen[key] = t
+    unique_trades = sorted(seen.values(), key=lambda x: x["carrier_total_profit"], reverse=True)
     return jsonify({
-        "best_trade": best_trade,
-        "diagnostic": diag,
-        "stations_checked": len(buy_stations) + len(sell_stations)
+        "trades": unique_trades[:30],
+        "total_trades": len(unique_trades),
+        "commodities_scanned": scanned,
+        "system": system,
+        "station": station
     })
 
 # ============================================================
@@ -1236,11 +1024,10 @@ def fetch_fleet():
         return None
 
 def in_game_datetime():
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     ig_year = now.year + 1286
-    return now.strftime(f"%Y-%m-%d %H:%M UTC").replace(
-        str(now.year), str(ig_year), 1
-    )
+    ts = now.strftime("%Y-%m-%d %H:%M UTC")
+    return ts.replace(str(now.year), str(ig_year), 1)
 
 def fmt_cr(n):
     if n >= 1_000_000_000:
@@ -1325,7 +1112,7 @@ async def cmd_sync(ctx: commands.Context):
     await bot.tree.sync(guild=guild)
     await ctx.send("Commands synced.")
 
-@bot.tree.command(name="status", description="NORAI system status and current operations.")
+@bot.tree.command(name="status", description="NORAI system status.")
 async def cmd_status(interaction: discord.Interaction):
     fleet = fetch_fleet()
     if fleet:
@@ -1335,14 +1122,14 @@ async def cmd_status(interaction: discord.Interaction):
         fleet_summary = "data unavailable"
     await interaction.response.send_message(
         STATUS_RESPONSE.format(
-            timestamp=datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+            timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
             fleet_summary=fleet_summary,
             contract_count="0",
             ceo_status=ceo_status,
         )
     )
 
-@bot.tree.command(name="fleet", description="View the NORTHCORP active fleet registry.")
+@bot.tree.command(name="fleet", description="NORTHCORP fleet registry.")
 async def cmd_fleet(interaction: discord.Interaction):
     fleet = fetch_fleet()
     if not fleet:
@@ -1361,15 +1148,15 @@ async def cmd_fleet(interaction: discord.Interaction):
 async def cmd_about(interaction: discord.Interaction):
     await interaction.response.send_message(ABOUT_RESPONSE)
 
-@bot.tree.command(name="services", description="List NORTHCORP services.")
+@bot.tree.command(name="services", description="NORTHCORP services.")
 async def cmd_services(interaction: discord.Interaction):
     await interaction.response.send_message(SERVICES_RESPONSE)
 
-@bot.tree.command(name="contact", description="How to reach CEO North.")
+@bot.tree.command(name="contact", description="Contact CEO North.")
 async def cmd_contact(interaction: discord.Interaction):
     await interaction.response.send_message(CONTACT_RESPONSE)
 
-@bot.tree.command(name="help", description="List all available NORAI commands.")
+@bot.tree.command(name="help", description="Available commands.")
 async def cmd_help(interaction: discord.Interaction):
     await interaction.response.send_message("""**NORAI — Available Commands**
 
@@ -1388,12 +1175,12 @@ async def cmd_help(interaction: discord.Interaction):
 
 I also respond to: "NORAI" and "NORAI, report"
 
-**NORAI Trade Calculator:** Employee login required. Visit the employee portal for detailed trade planning with Inara integration.""")
+**NORAI Trade Calculator:** Employee login required for live route scanning.""")
 
 @bot.tree.command(name="clock", description="In-game date and time.")
 async def cmd_clock(interaction: discord.Interaction):
     ig_time = in_game_datetime()
-    utc_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    utc_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     await interaction.response.send_message(
         f"**Galactic Standard Time**\n\n- **In-Game:** {ig_time}\n- **UTC:** {utc_time}\n\n*NORTHCORP operates on 24-hour GST.*"
     )
@@ -1402,13 +1189,13 @@ async def cmd_clock(interaction: discord.Interaction):
 async def cmd_quote(interaction: discord.Interaction):
     await interaction.response.send_message(f"*{random.choice(QUOTES)}*")
 
-@bot.tree.command(name="trade", description="Quick trade profit calculator (manual).")
+@bot.tree.command(name="trade", description="Quick trade profit calculator.")
 @app_commands.describe(
-    commodity="Commodity name (e.g. Gold)",
+    commodity="Commodity name",
     buy_price="Buy price per ton at station (CR)",
     sell_price="Sell price per ton at destination (CR)",
     tonnage="Tonnage to haul",
-    commission="Commission per ton in CR (e.g. 10000)"
+    commission="Commission per ton in CR"
 )
 async def cmd_trade(
     interaction: discord.Interaction,
@@ -1443,16 +1230,13 @@ Net Profit:   {fmt_cr(net)}
 Profit/Ton:   {fmt_cr(ppt)}
 ```
 
-*For detailed trade planning with Inara price lookup, use the [NORAI Trade Calculator](https://northcorp-norai.onrender.com/calculator).*""")
+*For detailed route scanning with live market data, use the [NORAI Trade Calculator](https://northcorp-norai.onrender.com/calculator).*""")
 
 @bot.tree.command(name="log", description="[Contractor+] Submit a flight log.")
 @app_commands.describe(
-    ship="Ship used",
-    cargo="Cargo type and tonnage",
-    origin="Origin system/station",
-    destination="Destination system/station",
-    profit="Profit earned",
-    notes="Additional notes (optional)"
+    ship="Ship used", cargo="Cargo type and tonnage",
+    origin="Origin", destination="Destination",
+    profit="Profit earned", notes="Additional notes (optional)"
 )
 async def cmd_log(
     interaction: discord.Interaction,
@@ -1465,9 +1249,9 @@ async def cmd_log(
         return
     role_names = [r.name for r in member.roles]
     if "CEO" not in role_names and "Contractor" not in role_names:
-        await interaction.response.send_message("Access denied. Flight logs restricted to NORTHCORP personnel.", ephemeral=True)
+        await interaction.response.send_message("Access denied.", ephemeral=True)
         return
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     notes_str = notes if notes else "N/A"
     entry = (
         f"**FLIGHT LOG — {timestamp}**\n\n```\nShip:        {ship}\nCargo:       {cargo}\n"
@@ -1508,7 +1292,7 @@ async def cmd_broadcast(interaction: discord.Interaction, message: str):
     if channel is None:
         await interaction.response.send_message("Error: Bulletins channel not found.", ephemeral=True)
         return
-    await channel.send(f"**NORTHCORP BULLETIN** — {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}\n\n{message}")
+    await channel.send(f"**NORTHCORP BULLETIN** — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n\n{message}")
     await interaction.response.send_message("Bulletin transmitted.", ephemeral=True)
 
 @bot.tree.error
@@ -1531,8 +1315,6 @@ if __name__ == "__main__":
     if TOKEN is None:
         logger.critical("DISCORD_TOKEN not found in .env file.")
         exit(1)
-
     threading.Thread(target=start_flask, daemon=True).start()
     logger.info(f"Flask started on port {PORT}.")
-
     bot.run(TOKEN)
