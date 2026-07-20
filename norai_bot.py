@@ -1035,27 +1035,72 @@ def scan_commodity():
         return jsonify({"error": "API key and commodity required."}), 400
 
     req_vol = tonnage + safety
+    min_ppt = min_profit_total / tonnage
 
-    # Fetch best buy and sell stations
+    # Fetch buy stations
     buy_stations = inara_call(api_key, "getCommodityBestBuyStations", {
         "commodityName": commodity,
         "maxResults": max_results
     })
+
+    # Fetch sell stations
     sell_stations = inara_call(api_key, "getCommodityBestSellStations", {
         "commodityName": commodity,
         "maxResults": max_results
     })
 
+    # Build diagnostic info
+    diag = {
+        "commodity": commodity,
+        "buy_stations_total": len(buy_stations),
+        "sell_stations_total": len(sell_stations),
+        "req_vol": req_vol,
+        "tonnage": tonnage,
+        "safety": safety,
+        "comm_load": comm_load,
+        "comm_unload": comm_unload,
+        "min_ppt": min_ppt,
+        "min_profit_total": min_profit_total,
+    }
+
+    # Sample the first buy station to see what data we're getting
+    if buy_stations:
+        diag["sample_buy"] = {
+            "station": buy_stations[0].get("stationName", "?"),
+            "system": buy_stations[0].get("starsystemName", "?"),
+            "price": buy_stations[0].get("buyPrice", 0),
+            "supply": buy_stations[0].get("supply", 0),
+            "all_keys": list(buy_stations[0].keys())
+        }
+    if sell_stations:
+        diag["sample_sell"] = {
+            "station": sell_stations[0].get("stationName", "?"),
+            "system": sell_stations[0].get("starsystemName", "?"),
+            "price": sell_stations[0].get("sellPrice", 0),
+            "demand": sell_stations[0].get("demand", 0),
+            "all_keys": list(sell_stations[0].keys())
+        }
+
     # Filter by volume
     valid_buys = [s for s in buy_stations if s.get("supply", 0) >= req_vol]
     valid_sells = [s for s in sell_stations if s.get("demand", 0) >= req_vol]
 
+    diag["valid_buys"] = len(valid_buys)
+    diag["valid_sells"] = len(valid_sells)
+
+    # Show best volume info
+    if buy_stations:
+        best_supply = max(s.get("supply", 0) for s in buy_stations)
+        diag["best_supply_found"] = best_supply
+    if sell_stations:
+        best_demand = max(s.get("demand", 0) for s in sell_stations)
+        diag["best_demand_found"] = best_demand
+
     if not valid_buys or not valid_sells:
         return jsonify({
             "best_trade": None,
-            "stations_checked": len(buy_stations) + len(sell_stations),
-            "valid_buys": len(valid_buys),
-            "valid_sells": len(valid_sells)
+            "diagnostic": diag,
+            "message": f"No stations with sufficient volume (need {req_vol:,.0f}t supply AND demand). Best supply: {diag.get('best_supply_found', 0):,}t, Best demand: {diag.get('best_demand_found', 0):,}t"
         })
 
     # Find best pairing
@@ -1085,9 +1130,8 @@ def scan_commodity():
 
     return jsonify({
         "best_trade": best_trade,
-        "stations_checked": len(buy_stations) + len(sell_stations),
-        "valid_buys": len(valid_buys),
-        "valid_sells": len(valid_sells)
+        "diagnostic": diag,
+        "stations_checked": len(buy_stations) + len(sell_stations)
     })
 
 # ============================================================
